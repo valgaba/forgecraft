@@ -1,6 +1,6 @@
 # ForgeCraft 0.1
 
-Editor de audio para Windows, inspirado en la estética y el flujo de los editores clásicos como Sound Forge 4.5. Implementación propia en **Qt Widgets 6.7.0, C++17 y MinGW 11.2 de 64 bits**, el mismo kit configurado en Radit.
+Editor de audio para Windows, inspirado en la estética y el flujo de los editores clásicos como Sound Forge 4.5. Implementación propia en, C++17 y MinGW 11.2 de 64 bits**.
 
 ![Editor con dos documentos abiertos](forgecraft.png)
 
