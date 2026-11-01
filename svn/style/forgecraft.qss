@@ -1,0 +1,496 @@
+/* ============================================================================
+   ForgeCraft — hoja de estilo
+   Identidad visual RADIT: carcasa oscura, superficies planas, acento #80A4AE.
+   Referencia: docs/analisis-estilo-radit.md (§3.2 tokens, §9 lo que no copiar).
+
+   Paleta
+     fondo profundo      #181e2c   ventana, área de trabajo, lienzo de onda
+     panel               #20242e   barras, títulos de módulo, cabeceras
+     panel elevado       #252b39   campos de entrada
+     borde               #333b4f
+     borde medio         #535b6a
+     borde claro         #686b74
+     texto               #dfdbd2
+     texto secundario    #8a8d96
+     acento              #80A4AE
+     realce (hover)      #30384b
+     pulsado             #1d2230
+     selección / menú    #4e4d7a
+
+   Escala
+     Base de 12 px (9 pt). Las medidas se han ampliado respecto a Radit
+     (barra de desplazamiento de 12 px en lugar de 5, controles de 24 px en
+     lugar de 8-11) para que la interfaz sea usable en pantallas 4K.
+
+   Orden de las secciones
+     1. Base y textos            7. Módulos MDI
+     2. Menús y barra de menús   8. Diálogos y formularios
+     3. Barras de herramientas   9. Controles de entrada
+     4. Barra de estado         10. Árboles, listas y diálogo de archivos
+     5. Docks                   11. Barras de desplazamiento y tooltips
+     6. Área de trabajo         12 . Estilos por pantalla (objectName)
+   ========================================================================= */
+
+/* == 1. Base y textos ==================================================== */
+QMainWindow, QDialog, QMessageBox, QInputDialog, QProgressDialog {
+    background-color: #181e2c;
+    color: #dfdbd2;
+}
+
+QLabel {
+    background: transparent;
+    color: #dfdbd2;
+}
+QLabel:disabled { color: #686b74; }
+
+QWidget:disabled { color: #686b74; }
+
+QMainWindow::separator {
+    background-color: #333b4f;
+    width: 3px;
+    height: 3px;
+}
+QMainWindow::separator:hover { background-color: #4e4d7a; }
+
+/* == 2. Menús ============================================================ */
+QMenuBar {
+    background-color: #181e2c;
+    color: #dfdbd2;
+    border: none;
+    border-bottom: 1px solid #333b4f;
+    padding: 1px 4px;
+}
+QMenuBar::item {
+    background: transparent;
+    color: #dfdbd2;
+    padding: 5px 10px;
+    border-radius: 2px;
+}
+QMenuBar::item:selected { background-color: #39385b; }
+QMenuBar::item:pressed  { background-color: #4e4d7a; }
+
+QMenu {
+    background-color: #20242e;
+    color: #dfdbd2;
+    border: 1px solid #333b4f;
+    padding: 4px;
+}
+QMenu::item {
+    background: transparent;
+    color: #dfdbd2;
+    border: 1px solid transparent;
+    border-radius: 2px;
+    padding: 5px 24px 5px 22px;
+}
+QMenu::item:selected {
+    background-color: #4e4d7a;
+    color: #ffffff;
+    border-color: #7885a6;
+}
+QMenu::item:disabled { color: #686b74; }
+QMenu::separator {
+    height: 1px;
+    background-color: #333b4f;
+    margin: 5px 8px;
+}
+QMenu::indicator { width: 14px; height: 14px; }
+
+/* == 3. Barras de herramientas =========================================== */
+QToolBar {
+    background-color: #20242e;
+    border: none;
+    border-bottom: 1px solid #333b4f;
+    padding: 3px 4px;
+    spacing: 3px;
+}
+QToolBar#transport {
+    border-bottom: none;
+    border-top: 1px solid #333b4f;
+    padding: 3px 6px;
+    spacing: 4px;
+}
+QToolBar#transport QToolButton {
+    padding: 5px;
+    border-radius: 3px;
+}
+QToolBar::separator {
+    background-color: #333b4f;
+    width: 1px;
+    margin: 3px 5px;
+}
+QToolBar::handle { background: transparent; }
+
+QToolButton {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 2px;
+    padding: 3px;
+    color: #dfdbd2;
+}
+QToolButton:hover {
+    background-color: #30384b;
+    border-color: #535b6a;
+}
+QToolButton:pressed { background-color: #1d2230; border-color: #80A4AE; }
+QToolButton:checked { background-color: #2a3346; border-color: #80A4AE; }
+QToolButton:disabled { border-color: transparent; }
+QToolButton::menu-indicator { width: 0; }
+
+/* == 4. Barra de estado ================================================== */
+QStatusBar {
+    background-color: #181e2c;
+    color: #8a8d96;
+    border-top: 1px solid #333b4f;
+}
+QStatusBar::item { border: none; }
+QStatusBar QLabel { color: #8a8d96; padding: 0 8px; }
+QSizeGrip { background: transparent; width: 12px; height: 12px; }
+
+/* == 5. Docks ============================================================ */
+QDockWidget {
+    background-color: #181e2c;
+    color: #dfdbd2;
+    border: none;
+}
+QDockWidget::title {
+    background-color: #20242e;
+    border: 1px solid #333b4f;
+    color: #8a8d96;
+    font-size: 11px;
+    font-weight: bold;
+    padding: 3px 4px;
+    text-align: left;
+}
+
+/* == 6. Área de trabajo ================================================== */
+QMdiArea {
+    background-color: #181e2c;
+    border: none;
+}
+
+/* == 7. Módulos MDI ======================================================
+   Las subventanas son marcos propios: la barra de título nativa está
+   desactivada y el módulo la dibuja con Frame#framebarra (ver Fase 3).       */
+QMdiSubWindow {
+    background: transparent;
+    border: 1px solid #333b4f;
+}
+
+QWidget#moduleFrame {
+    background-color: #262c3b;
+    border: 1px solid #333b4f;
+}
+
+QFrame#framebarra {
+    background-color: #20242e;
+    border: none;
+    border-bottom: 1px solid #333b4f;
+}
+QFrame#framebarra[active="true"] {
+    background-color: #252b39;
+    border-bottom: 2px solid #80A4AE;
+}
+QLabel#PanelTitle {
+    background: transparent;
+    color: #8a8d96;
+    font-size: 12px;
+    font-weight: bold;
+}
+QFrame#framebarra[active="true"] QLabel#PanelTitle { color: #dfdbd2; }
+
+QToolButton#moduleClose, QToolButton#moduleMinimize {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 2px;
+    color: #8a8d96;
+    padding: 0;
+    min-width: 22px;
+    min-height: 22px;
+}
+QToolButton#moduleClose:hover, QToolButton#moduleMinimize:hover {
+    background-color: #4e4d7a;
+    border-color: #7885a6;
+    color: #ffffff;
+}
+QToolButton#moduleClose:pressed, QToolButton#moduleMinimize:pressed { background-color: #1d2230; }
+
+/* Módulo minimizado: botón bajo, alineado en el pie del área de trabajo. */
+QFrame#framebarra[minimized="true"] {
+    background-color: #252b39;
+    border: 1px solid #535b6a;
+    border-radius: 2px;
+}
+QFrame#framebarra[minimized="true"][active="true"] { border-color: #80a4ae; }
+QFrame#framebarra[minimized="true"] QLabel#PanelTitle {
+    color: #dfdbd2;
+    font-weight: normal;
+    padding: 0 2px;
+}
+
+QWidget#moduleGrip { background: transparent; }
+
+QFrame#overviewStrip {
+    background-color: #181e2c;
+    border: 1px solid #333b4f;
+    border-radius: 2px;
+}
+
+/* == 8. Diálogos y formularios =========================================== */
+QDialog QLabel { color: #8a8d96; }
+QDialog QLabel#processDescription { color: #dfdbd2; }
+QDialog QLabel#processScope { color: #8a8d96; font-style: italic; }
+
+QProgressDialog { background-color: #181e2c; }
+QProgressDialog QLabel { color: #dfdbd2; }
+QProgressBar {
+    background-color: #181e2c;
+    border: 1px solid #333b4f;
+    border-radius: 2px;
+    color: #dfdbd2;
+    font-size: 12px;
+    min-height: 16px;
+    text-align: center;
+}
+QProgressBar::chunk {
+    background-color: #80a4ae;
+    border-radius: 1px;
+}
+QProgressBar#LoadingProgress { background-color: #252b39; }
+
+QPushButton {
+    background-color: #262c3b;
+    border: 1px solid #535b6a;
+    border-radius: 2px;
+    color: #80a4ae;
+    font-size: 12px;
+    min-height: 22px;
+    padding: 4px 14px;
+}
+QPushButton:hover {
+    background-color: #30384b;
+    border-color: #80a4ae;
+}
+QPushButton:pressed { background-color: #1d2230; }
+QPushButton:default { border-color: #80a4ae; }
+QPushButton:checked { background-color: #2a3346; border-color: #80a4ae; }
+QPushButton:disabled {
+    background-color: #20242e;
+    border-color: #333b4f;
+    color: #686b74;
+}
+
+QMessageBox QLabel { color: #dfdbd2; }
+QMessageBox QPushButton { min-width: 84px; }
+QInputDialog QLabel { color: #dfdbd2; }
+
+QFormLayout { spacing: 6px; }
+
+/* == 9. Controles de entrada ============================================= */
+QLineEdit, QAbstractSpinBox, QComboBox {
+    background-color: #252b39;
+    border: 1px solid #535b6a;
+    border-radius: 2px;
+    color: #80a4ae;
+    font-size: 12px;
+    min-height: 20px;
+    padding: 2px 6px;
+    selection-background-color: #4e4d7a;
+    selection-color: #ffffff;
+}
+QLineEdit:focus, QAbstractSpinBox:focus, QComboBox:focus,
+QLineEdit:hover, QAbstractSpinBox:hover, QComboBox:hover {
+    border-color: #80a4ae;
+}
+QLineEdit:disabled, QAbstractSpinBox:disabled, QComboBox:disabled {
+    background-color: #20242e;
+    border-color: #333b4f;
+    color: #686b74;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #20242e;
+    border: 1px solid #333b4f;
+    color: #dfdbd2;
+    outline: none;
+    selection-background-color: #4e4d7a;
+    selection-color: #ffffff;
+}
+
+QCheckBox {
+    background: transparent;
+    color: #dfdbd2;
+    spacing: 8px;
+}
+QCheckBox:disabled { color: #686b74; }
+QCheckBox::indicator {
+    background-color: #252b39;
+    border: 1px solid #686b74;
+    border-radius: 2px;
+    width: 16px;
+    height: 16px;
+}
+QCheckBox::indicator:hover { border-color: #80a4ae; }
+QCheckBox::indicator:checked {
+    background-color: #80a4ae;
+    border-color: #80a4ae;
+}
+QCheckBox::indicator:disabled {
+    background-color: #20242e;
+    border-color: #333b4f;
+}
+
+QToolTip {
+    background-color: #333b4f;
+    border: 1px solid #686b74;
+    color: #7b8d96;
+    font-size: 12px;
+    padding: 5px;
+}
+
+/* == 10. Árboles, listas y diálogo de archivos =========================== */
+QTreeView, QListView, QTableView {
+    background-color: #181e2c;
+    border: 1px solid #333b4f;
+    color: #dfdbd2;
+    selection-background-color: #4e4d7a;
+    selection-color: #ffffff;
+}
+QTreeView::item, QListView::item, QTableView::item { padding: 2px; }
+QTreeView::item:selected, QListView::item:selected, QTableView::item:selected {
+    background-color: #4e4d7a;
+    color: #ffffff;
+}
+QHeaderView::section {
+    background-color: #20242e;
+    border: none;
+    border-right: 1px solid #333b4f;
+    border-bottom: 1px solid #333b4f;
+    color: #8a8d96;
+    padding: 4px 6px;
+}
+QFileDialog {
+    background-color: #181e2c;
+    color: #dfdbd2;
+}
+QFileDialog QToolButton { padding: 4px; }
+QFileDialog QComboBox { min-width: 180px; }
+
+/* == 11. Barras de desplazamiento ======================================== */
+QScrollBar:vertical {
+    background: #181e2c;
+    border: none;
+    margin: 0;
+    width: 12px;
+}
+QScrollBar::handle:vertical {
+    background: #535b6a;
+    border-radius: 5px;
+    margin: 1px 2px;
+    min-height: 28px;
+}
+QScrollBar::handle:vertical:hover { background: #77769d; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    background: none;
+    border: none;
+    height: 0;
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
+
+QScrollBar:horizontal {
+    background: #181e2c;
+    border: none;
+    margin: 0;
+    height: 12px;
+}
+QScrollBar::handle:horizontal {
+    background: #535b6a;
+    border-radius: 5px;
+    margin: 2px 1px;
+    min-width: 28px;
+}
+QScrollBar::handle:horizontal:hover { background: #77769d; }
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    background: none;
+    border: none;
+    width: 0;
+}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: none; }
+
+QSplitter::handle { background-color: #333b4f; }
+QSplitter::handle:horizontal { width: 1px; }
+QSplitter::handle:vertical { height: 1px; }
+
+/* == 12. Estilos por pantalla (objectName) =============================== */
+QLabel#timeField {
+    background-color: #181e2c;
+    border: 1px solid #333b4f;
+    border-radius: 2px;
+    color: #80a4ae;
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 12px;
+    padding: 1px 6px;
+}
+
+QDockWidget#levelsDock { background-color: #181e2c; }
+
+#recordDialog QLabel { color: #8a8d96; }
+#recordDialog QLabel#recordTime { color: #80a4ae; font-family: "Consolas", "Courier New", monospace; }
+#recordDialog QLabel#recordState { color: #80a4ae; font-weight: bold; }
+#recordDialog QPushButton#recordStart { color: #e29292; }
+#recordDialog QPushButton#recordStart:hover { border-color: #e29292; }
+
+#processDialog QDoubleSpinBox, #processDialog QComboBox { min-width: 140px; }
+
+/* == 13. Diálogos de proceso y efectos =================================== */
+QLabel#processNameLabel { color: #8a8d96; font-size: 11px; }
+QLabel#processName {
+    background-color: #252b39;
+    border: 1px solid #535b6a;
+    border-radius: 2px;
+    color: #dfdbd2;
+    padding: 3px 8px;
+}
+QLabel#processParameter { color: #8a8d96; font-size: 12px; }
+QLabel#processCaption { color: #8a8d96; font-size: 11px; }
+QLabel#processFooter { color: #8a8d96; font-size: 11px; }
+QFrame#processSeparator { background-color: #333b4f; border: none; }
+
+/* Valor encima del slider vertical. */
+QLabel#processValue {
+    color: #80a4ae;
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 11px;
+}
+
+/* Sliders del tema Radit: ranura plana y tirador de acento. */
+QSlider { background: transparent; }
+QSlider::groove:horizontal {
+    background-color: #181e2c;
+    border: 1px solid #333b4f;
+    border-radius: 3px;
+    height: 6px;
+}
+QSlider::handle:horizontal {
+    background-color: #80a4ae;
+    border: 1px solid #80a4ae;
+    border-radius: 3px;
+    width: 16px;
+    height: 16px;
+    margin: -6px 0;
+}
+QSlider::handle:horizontal:hover { background-color: #dfdbd2; border-color: #dfdbd2; }
+QSlider::groove:vertical {
+    background-color: #181e2c;
+    border: 1px solid #333b4f;
+    border-radius: 3px;
+    width: 6px;
+}
+QSlider::handle:vertical {
+    background-color: #80a4ae;
+    border: 1px solid #80a4ae;
+    border-radius: 3px;
+    width: 16px;
+    height: 16px;
+    margin: 0 -6px;
+}
+QSlider::handle:vertical:hover { background-color: #dfdbd2; border-color: #dfdbd2; }

@@ -1,0 +1,31 @@
+# ForgeCraft — avisos de terceros
+
+ForgeCraft se distribuye bajo **GNU General Public License versión 3** (véase `LICENSE`). Además utiliza los siguientes componentes.
+
+## Qt 6.7 — The Qt Company
+
+Se enlaza dinámicamente con QtCore, QtGui, QtWidgets, QtConcurrent y QtSvg. Qt 6.7 se ofrece con doble licencia GPLv3 y LGPLv3; aquí se usa bajo GPLv3, coherente con la licencia de ForgeCraft.
+
+Textos: `licenses/Qt-GPL-3.0.txt`, `licenses/Qt-LGPL-3.0.txt` y `licenses/Qt-Copyright.txt`.
+
+Los plugins desplegados en `platforms`, `iconengines` e `imageformats` pertenecen a Qt.
+
+## MinGW-w64 11.2 y runtime de GCC
+
+El ejecutable y las DLL del compilador se generan con el kit MinGW 11.2 de 64 bits. Se distribuyen con sus propias licencias y la excepción de runtime de GCC.
+
+Textos: `licenses/MinGW-w64-runtime.txt` y `licenses/GCC-Runtime-Exception-3.1.txt`.
+
+## mpg123 — Michael Hipp y colaboradores
+
+`libmpg123-0.dll`, decodificación de MP3. GNU LGPL 2.1.
+
+Texto: `licenses/LGPL-2.1.txt`. Origen: <https://www.mpg123.de/>
+
+## LAME 3.100 — Mark Taylor y colaboradores
+
+`libmp3lame-0.dll`, codificación de MP3. GNU LGPL 2 o posterior.
+
+Texto: `licenses/LGPL-2.1.txt` (aplicable por la opción de versión posterior). Origen: <https://lame.sourceforge.io/>
+
+Las DLL de mpg123 y LAME se cargan dinámicamente y pueden sustituirse por compilaciones compatibles. ForgeCraft no usa las funciones de decodificación de LAME.

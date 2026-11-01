@@ -1,0 +1,167 @@
+# ForgeCraft 0.1
+
+Editor de audio para Windows, inspirado en la estética y el flujo de los editores clásicos como Sound Forge 4.5. Implementación propia en **Qt Widgets 6.7.0, C++17 y MinGW 11.2 de 64 bits**, el mismo kit configurado en Radit.
+
+![Editor con dos documentos abiertos](forgecraft.png)
+
+## Capturas
+
+| | |
+|---|---|
+| [![Diálogo de proceso con sliders](forgecraft-proceso.png)](forgecraft-proceso.png) | [![Módulo minimizado al pie](forgecraft-minimizado.png)](forgecraft-minimizado.png) |
+| Diálogos de Proceso y Efectos con sliders, pie de selección y Previsualizar/Bypass. | Documento minimizado como botón al pie del área de trabajo. |
+| [![Diálogo de grabación](forgecraft-grabacion.png)](forgecraft-grabacion.png) | |
+| Grabación con monitorización, pausa y formato. | |
+
+## Descarga
+
+El paquete para Windows de 64 bits se publica en la página de *Releases* del repositorio: descomprimir `forgecraft_0_1_0.zip` y ejecutar `forgecraft_0_1_0\forgecraft.exe`. No requiere instalación. El paquete incluye las DLL de Qt, los plugins, los códecs MP3, la hoja de estilo y las licencias; los detalles están en `README.txt` del propio paquete.
+
+## Estructura
+
+```text
+forgecraft/
+├── svn/                  Código fuente y proyecto de Qt Creator
+│   ├── forgecraft.pro
+│   ├── build.ps1         Script de compilación
+│   ├── *.cpp, *.h        Editor, audio y pruebas
+│   ├── style/            Hoja de estilo del tema
+│   ├── icons/            Iconos SVG
+│   ├── distribution/     Licencias y avisos de terceros
+│   └── third_party/      Bibliotecas MP3, cabeceras y licencias
+├── out/
+│   ├── bin/              Ejecutable, DLL, plugins y licencias (no versionado)
+│   ├── build/            Makefiles, objetos, moc y capturas (no versionado)
+│   └── packages/         Paquetes generados (no versionado)
+├── docs/                 Análisis de la identidad visual
+├── build.ps1             Compilación y pruebas
+├── package.ps1           Empaquetado y SHA256 para la Release
+├── LICENSE               GPL-3.0
+└── README.md
+```
+
+La carpeta `svn` organiza las fuentes con el mismo criterio que Radit. El nombre de la carpeta no implica que se haya creado un repositorio Subversion.
+
+## Abrir
+
+Ejecutar `out/bin/forgecraft.exe`. Mantener las DLL, las carpetas `platforms`, `iconengines` e `imageformats`, la carpeta `licenses` y la hoja `forgecraft.qss` junto al ejecutable. Las bibliotecas MP3 se incluyen en el proyecto y se copian al ejecutar `build.ps1 -Deploy`.
+Para editar el proyecto en Qt Creator, abrir `svn/forgecraft.pro` y seleccionar el kit Desktop Qt 6.7.0 MinGW 64-bit.
+
+## Interfaz
+
+La apariencia sigue la identidad visual de Radit, según el análisis de `docs/analisis-estilo-radit.md`.
+
+- `svn/style/forgecraft.qss` es la fuente principal del aspecto: paleta oscura (`#181e2c`, `#20242e`, `#252b39`), bordes `#333b4f`, texto `#dfdbd2`/`#8a8d96` y acento `#80A4AE`. Está versionada y se carga desde la carpeta del ejecutable, de modo que se puede ajustar sin recompilar; si falta, se usa la copia incrustada en `forgecraft.qrc`.
+- `svn/theme.h` y `svn/theme.cpp` contienen lo que la hoja no alcanza: la paleta de respaldo de Qt (para las flechas y controles que dibuja el estilo), las constantes con nombre de la forma de onda y los medidores, y el acceso a los iconos.
+- Los iconos son SVG del set de Radit (`svn/icons`), incrustados en `forgecraft.qrc` con nombre de recurso propio (`:/icons/play.svg`, `:/icons/open.svg`…). Se cargan con el motor de iconos SVG de Qt, así que la distribución incluye `Qt6Svg.dll`, el plugin `iconengines/qsvgicon.dll` y `imageformats/qsvg.dll`.
+- El estilo de Qt es **Fusion**, que dibuja con la paleta y evita restos claros del tema nativo de Windows.
+- Las subventanas MDI no usan el marco del sistema: cada módulo dibuja su barra de título (`Frame#framebarra`) con minimizar y cerrar. Arrastrar la barra mueve el módulo, el doble clic lo maximiza y los bordes izquierdo, derecho e inferior redimensionan el módulo; el puntero cambia de forma al entrar en la zona de agarre y una pequeña marca en la esquina inferior derecha lo recuerda. La franja de la barra de título queda reservada para mover, así que no redimensiona.
+- Minimizar convierte el módulo en un botón bajo apoyado en el pie del área de trabajo, con la flecha de restaurar, el título recortado y el cierre, alineado en fila con los demás minimizados. El botón de restaurar o el doble clic lo devuelven a su tamaño y posición anteriores; los módulos minimizados no se arrastran ni los recolocan *Cascada* y *Mosaico*.
+- Los diálogos de Proceso y Efectos siguen el patrón de los editores clásicos con la paleta de Radit: nombre del proceso, descripción y ámbito, parámetros como sliders (columnas con el valor encima y la etiqueta debajo cuando hay tres o más; fila ancha con caja de valor cuando hay uno o dos), columna de botones a la derecha (Aplicar, Cancelar, Ayuda, Previsualizar y Bypass) y pie con la selección y los canales. Los rangos de más de dos décadas —frecuencias, duraciones— se reparten en escala logarítmica para que el slider sea manejable.
+- **Previsualizar** procesa el tramo de escucha con los parámetros actuales y lo reproduce sin aplicarlo; al terminar se detiene solo. **Bypass** alterna entre el resultado y el audio original para comparar. La escucha se limita a 15 segundos desde la selección o el cursor, y los valores se vuelven a leer al pulsar de nuevo Previsualizar tras cambiar un parámetro.
+- En cada módulo, el desplazamiento de la vista ocupa la fila inferior y las lupas de acercar y alejar quedan a su derecha. El transporte inferior de la ventana principal usa iconos de 24 px.
+- Los diálogos heredan el tema por sus `objectName` (`recordDialog`, `processDialog`, `processingProgress`) y los diálogos de archivo se abren sin el shell nativo para mantener la coherencia.
+
+Los valores de la hoja están ampliados respecto a Radit (barra de desplazamiento de 12 px, controles de 24 px) para que la interfaz siga siendo usable en pantallas de alta densidad.
+
+## Funciones actuales
+
+- Ventanas de audio MDI superpuestas, con cascada y mosaico, con módulos de marco propio (barra de título con minimizar y cerrar, y bordes redimensionables).
+- Interfaz oscura con la identidad visual de Radit: superficies planas, acento `#80A4AE` y formas de onda sobre lienzo oscuro con reglas de tiempo por documento.
+- Medidores verticales de pico estéreo a la derecha y transporte inferior, con controles adicionales en cada documento.
+- Abrir WAV mono/estéreo PCM 8, 16, 24 y 32 bits, o float de 32 bits.
+- Abrir MP3 mono/estéreo, incluidos archivos con bitrate variable.
+- Guardar WAV PCM de 16 bits, o de 8 bits tras Convert to 8-Bit, con sustitución atómica del archivo.
+- Guardar MP3 con LAME a 128, 192, 256 o 320 kbps CBR; cabecera LAME con duración y datos para reproducción sin huecos.
+- Selección con ratón, doble clic para seleccionar todo, zoom y desplazamiento.
+- Los extremos de la selección se arrastran: al acercar el puntero a uno de ellos cambia a flecha doble y se puede ampliar o reducir la selección desde ese borde, con el otro extremo fijo.
+- Arrastrar una parte seleccionada fuera de la forma de onda la copia: si se suelta sobre el área de trabajo se abre un documento nuevo con ese fragmento, y si se suelta sobre otro módulo se inserta en su documento en el punto donde se suelta (deshacible allí). El documento de origen no cambia.
+- Copiar o cortar una selección y pegarla en otro módulo, con el portapapeles compartido entre documentos.
+- Menú contextual con el botón derecho sobre el área de trabajo y sobre la forma de onda, con las mismas acciones que el menú Edición (deshacer, rehacer, cortar, copiar, pegar, eliminar, recortar y seleccionar todo).
+- Los documentos sin archivo se numeran como `Sin título 1`, `Sin título 2`… con el primer número libre.
+- Reproducción de selección o desde el cursor, bucle y medidor de pico digital.
+- Cortar, copiar, pegar, borrar y recortar; deshacer/rehacer hasta 20 operaciones.
+- Volumen, normalización, fundidos, inversión temporal y silencio.
+- Generador de tono sinusoidal y aviso de cambios sin guardar.
+- Arrastrar uno o varios WAV/MP3 sobre el escritorio de trabajo o una forma de onda abre una ventana nueva por archivo, sin sustituir el documento anterior.
+- Campos de inicio, final y duración de selección en cada ventana.
+- Grabación PCM de 16 bits con dispositivo de entrada, mono/estéreo, monitor de niveles, pausa/reanudación, límite de duración y ajuste DC.
+
+Espacio reproduce/detiene; Esc detiene; Ctrl+rueda cambia el zoom; rueda desplaza la vista. Sin selección, los procesos afectan a todo el audio; borrar y recortar requieren selección. Pegar requiere la misma frecuencia y número de canales, salvo en un documento vacío.
+
+## Menús Proceso y Efectos
+
+Las entradas conservan los nombres de las capturas para facilitar su identificación. Son implementaciones propias de estas familias de procesamiento, con resultados que pueden diferir de Sound Forge 4.5.
+
+**Proceso:** Auto Trim/Crop con umbral y margen; Channel Converter (mezcla, extracción izquierda/derecha, duplicación mono); Convert to 8-Bit con dither TPDF opcional y exportación WAV de 8 bits; DC Offset; EQ gráfico de diez bandas y paramétrico; Fade de entrada, salida y envolvente; Insert Silence; inversión de polaridad e intercambio de canales; Mute; Normalize por pico; Pan/Expand; Resample con filtrado antialias; Reverse; Smooth/Enhance; Time Compress/Expand conservando tono; Volume.
+
+**Efectos:** Amplitude Modulation; Chorus; Delay/Echo simple y ping-pong; Distortion suave/dura; Dynamics con compresor, expansor y limitador; Envelope; Flange y Wah-Wah; Gapper/Snipper; Noise Gate; Pitch Shift y Bend; Reverb; Vibrato.
+
+Los efectos actúan sobre la selección, o sobre todo el audio si no hay selección. Channel Converter, Convert to 8-Bit y Resample siempre actúan sobre el documento completo. Insert Silence inserta en el cursor/inicio de selección. Las colas de eco y reverberación se añaden al final de la región procesada, antes del audio posterior; su duración puede ponerse a cero. Los efectos estéreo específicos requieren dos canales. La envolvente permite ajustar tres puntos de ganancia y la posición del punto intermedio.
+
+Los diálogos explican el ámbito y permiten ajustar los parámetros. El procesamiento se ejecuta en un hilo de trabajo con cancelación y se registra como una operación de deshacer. Cancelar conserva el audio anterior. La salida se limita al rango digital −1 a +1; los aumentos de nivel pueden saturar. Los algoritmos de tiempo/tono usan solapamiento y alineamiento de ondas; Pitch Bend es granular y no incluye preservación de formantes. La forma de onda utiliza una caché de picos para agilizar el redibujado de archivos largos.
+
+Referencias técnicas: filtros biquad según el [Audio EQ Cookbook del W3C](https://www.w3.org/TR/audio-eq-cookbook/). La implementación de tiempo/tono es propia y no incorpora SoundTouch ni otras bibliotecas DSP.
+
+## Abrir y guardar MP3
+
+Usar **Archivo → Abrir audio** para cargar WAV o MP3. Para convertir un WAV a MP3, usar **Archivo → Guardar como** y elegir **Audio MP3**; al cambiar el filtro se adapta la extensión. Al guardar se pide la calidad, con 192 kbps como valor inicial. Guardar un documento abierto desde MP3 conserva ese formato y permite elegir de nuevo la calidad.
+
+La exportación conserva 32.000, 44.100 o 48.000 Hz. Para otras frecuencias, LAME convierte a 44.100 Hz tras avisar al usuario; el documento en memoria no se remuestrea. La exportación codifica el audio editado completo y no conserva etiquetas ID3 ni carátulas. MP3 usa compresión con pérdida; para evitar sucesivas recodificaciones, conservar un original WAV cuando sea necesario.
+
+Los codecs `libmpg123-0.dll` y `libmp3lame-0.dll` se cargan desde la carpeta del ejecutable. No se necesita instalar un reproductor, FFmpeg ni Audacity. Los avisos de copyright, las licencias y los enlaces a los proyectos y fuentes están en `svn/third_party/mp3/NOTICE.md` y se despliegan en `out/bin/licenses`.
+
+## Grabación
+
+Abrir **Transporte → Grabar…**, pulsar **Ctrl+R**, o usar el botón rojo del transporte global o de una ventana de audio.
+
+1. Elegir entrada, frecuencia y mono/estéreo. La captura usa PCM de 16 bits mediante la API `waveIn` de Windows; la disponibilidad de cada formato depende del dispositivo.
+2. Elegir el destino: **Toma en ventana nueva**, **Insertar en el cursor** o **Sustituir la selección**. Insertar/sustituir usa el formato del documento para evitar conversiones implícitas. La posición de inserción puede ajustarse en segundos.
+3. **Preparar** o **Monitorizar entrada** abre la entrada y muestra niveles sin añadir audio. La monitorización es visual, sin enviar el micrófono a los altavoces.
+4. **Grabar** inicia la toma; **Pausa** y **Continuar** excluyen el tiempo de pausa. **Detener** conserva la toma y **Continuar** permite seguir añadiendo audio. **Nueva toma** permite descartar la anterior tras confirmación.
+5. **Usar toma** añade el audio al editor como una operación de deshacer. Se puede editar y guardar como WAV o MP3. Cerrar con audio pendiente ofrece añadirlo, descartarlo o cancelar el cierre.
+
+La duración máxima puede limitarse en segundos; cero significa sin límite de tiempo adicional. Todas las tomas tienen un límite de 512 MB de muestras en memoria (aproximadamente 25 minutos a 44.100 Hz estéreo). El tiempo disponible se calcula sobre ese límite, no sobre el espacio de disco. El ajuste DC aplica un filtro paso alto a 20 Hz. La selección de formato se bloquea mientras existe audio pendiente. Si una inserción no cabe o no es compatible, la toma se conserva en una ventana nueva.
+
+Los errores de entrada se muestran sin modificar el documento. Si Windows bloquea el micrófono, revisar sus permisos para aplicaciones de escritorio; **Entradas…** abre los ajustes de sonido. Esta versión no incorpora grabación remota, sincronización externa, creación automática de regiones ni escucha de entrada por los altavoces.
+
+Las pruebas automáticas de grabación usan una fuente PCM sintética y verifican conversión, monitorización, pausa, límites, inserción/sustitución, deshacer/rehacer, descarte y guardado WAV/MP3. También comprueban enumeración de entradas y errores nativos de dispositivo. No activan el micrófono: la captura física y sus niveles deben comprobarse con **Preparar** en el dispositivo del usuario. Vista de prueba: `out/build/recording-dialog.png`.
+
+## Compilar y verificar
+
+Desde PowerShell en esta carpeta:
+
+```powershell
+.\build.ps1 -Deploy -Test
+```
+
+El script usa el kit instalado en `C:\Qt`. Copia en `out/build/tools` los binutils de reemplazo que ya utiliza Radit para evitar el problema del cargador de Windows con el ensamblador antiguo. Antes de usarlos comprueba que enlazan un programa trivial; si esa comprobación falla (algunas versiones de binutils de MSYS2 fallan con `lseek: Bad file descriptor`), compila con las herramientas del propio kit de Qt y avisa por consola. Las dependencias de esas herramientas se encuentran en `C:\msys64\mingw64\bin`. No modifica Radit ni la instalación de Qt.
+
+`-Deploy` copia también `svn/style/forgecraft.qss` junto al ejecutable, para poder ajustar el tema sin recompilar, y los componentes que necesitan los iconos: `Qt6Svg.dll`, `iconengines/qsvgicon.dll` e `imageformats/qsvg.dll`.
+
+Prueba de integración de la interfaz (con las DLL desplegadas):
+
+```powershell
+Start-Process .\out\bin\forgecraft.exe -ArgumentList '--smoke-test' -Wait
+```
+
+`-Test` ejecuta las pruebas de audio y de interfaz. Genera `out/build/preview.png`, `out/build/minimized.png`, `out/build/process-dialog.png`, `out/build/process-dialog-eq.png`, `out/build/process-menu.png` y `out/build/effects-menu.png`. Comprueba edición, ventanas MDI (arrastre desde la barra de título, redimensionado por el borde con su cursor, minimizar al pie del área de trabajo y restaurar, activación al pulsar), la selección de la onda (se conserva al soltar, sus extremos se redimensionan con el cursor de flecha doble, arrastrarla fuera abre un documento y soltarla en otro módulo la inserta), copiar y cortar entre módulos, el menú contextual de Edición y la numeración de los documentos sin título, guardado MP3, los 37 procesos aplicados y deshechos desde sus menús, los controles de previsualización de los diálogos, cancelación de diálogo/trabajo y arrastre múltiple de WAV+MP3 sobre una forma de onda. La imagen muestra audio sintético de prueba. `--self-test` verifica conversión WAV/MP3, los cuatro bitrates, integridad fuera de selección, filtros antialias, posiciones de ecos, colas de reverberación, techo del limitador, duración/frecuencia al cambiar tiempo y tono, y el formato WAV de 8 bits con padding.
+
+## Empaquetar y publicar
+
+Con el ejecutable ya desplegado:
+
+```powershell
+.\package.ps1 -Version 0.1.0
+```
+
+Genera `out/packages/forgecraft_0_1_0.zip` con el ejecutable, la hoja de estilo, las DLL, los plugins (`platforms`, `iconengines`, `imageformats`), los códecs MP3, las licencias y los textos de instalación, y escribe `out/packages/SHA256SUMS.txt`. Ese zip y el archivo de sumas son los dos assets que se adjuntan a la Release; los binarios no se guardan en el repositorio.
+
+## Alcance de esta versión
+
+Todavía no reproduce todas las funciones de Sound Forge 4.5. Pendientes: otros formatos, marcadores, automatización avanzada de curvas, grabación remota/sincronizada y plugins externos. Audio y deshacer se mantienen en memoria; límite de apertura de 512 MB por archivo y de 512 MB de audio decodificado para MP3. Los procesos limitan su resultado a 512 MB de muestras. El guardado WAV usa PCM de 16 bits, salvo documentos configurados a 8 bits. Reproducción mediante la API waveOut de Windows; el medidor muestra picos de muestras, no true peak. No incorpora código, marcas gráficas ni recursos del programa original.
+
+## Licencia
+
+ForgeCraft se distribuye bajo **GNU General Public License versión 3**; el texto completo está en [LICENSE](LICENSE). Usa Qt 6.7 (GPLv3/LGPLv3), el runtime de MinGW 11.2 y GCC, mpg123 (LGPL 2.1) y LAME (LGPL 2 o posterior). Los avisos y los textos completos están en `svn/distribution/THIRD_PARTY_NOTICES.txt` y `svn/distribution/licenses/`, y se incluyen en cada paquete.
+

@@ -1,0 +1,27 @@
+<RCC>
+    <qresource prefix="/">
+        <file>style/forgecraft.qss</file>
+
+        <!-- Iconos de Radit (svn/icons), con nombre de recurso propio. -->
+        <file alias="icons/new.svg">icons/audiofile.svg</file>
+        <file alias="icons/open.svg">icons/Load.svg</file>
+        <file alias="icons/save.svg">icons/save.svg</file>
+        <file alias="icons/save-as.svg">icons/saveas.svg</file>
+        <file alias="icons/undo.svg">icons/Undo.svg</file>
+        <file alias="icons/redo.svg">icons/Redo.svg</file>
+        <file alias="icons/cut.svg">icons/ActionCut.svg</file>
+        <file alias="icons/copy.svg">icons/ActionCopy.svg</file>
+        <file alias="icons/paste.svg">icons/ActionPaste.svg</file>
+        <file alias="icons/zoom-in.svg">icons/zoom-in.svg</file>
+        <file alias="icons/zoom-out.svg">icons/zoom-out.svg</file>
+        <file alias="icons/play.svg">icons/Playmini.svg</file>
+        <file alias="icons/pause.svg">icons/Pause.svg</file>
+        <file alias="icons/stop.svg">icons/Stop.svg</file>
+        <file alias="icons/start.svg">icons/rewind.svg</file>
+        <file alias="icons/end.svg">icons/forward.svg</file>
+        <file alias="icons/loop.svg">icons/Loop.svg</file>
+        <file alias="icons/close.svg">icons/Close.svg</file>
+        <file alias="icons/minimize.svg">icons/minimize.svg</file>
+        <file alias="icons/restore.svg">icons/restore.svg</file>
+    </qresource>
+</RCC>

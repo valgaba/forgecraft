@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="190" height="190" viewBox="0 0 190 190">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0.45" y2="1">
+      <stop offset="0" stop-color="#B9D8DF"/>
+      <stop offset="0.45" stop-color="#80A4AE"/>
+      <stop offset="1" stop-color="#587B87"/>
+    </linearGradient>
+    <clipPath id="letter">
+      <path fill-rule="evenodd" clip-rule="evenodd" d="M45 12 Q47 6 54 6 H116 C147 6 165 25 160 51 C156 71 144 84 125 91 L156 158 Q160 168 150 168 H113 Q106 168 102 160 L81 121 H66 L55 161 Q53 168 45 168 H12 Q4 168 7 158 Z M76 39 L66 75 H93 Q111 75 115 58 Q120 39 103 39 Z"/>
+    </clipPath>
+  </defs>
+  <g transform="translate(10 8)" clip-path="url(#letter)">
+    <rect width="180" height="180" fill="url(#body)"/>
+    <path d="M35 0 H180 V105 Z" fill="#D4EDF1" opacity="0.14"/>
+    <path d="M0 83 L180 164 V180 H0 Z" fill="#3D616E" opacity="0.16"/>
+    <g fill="none" stroke="#E0F3F6" stroke-width="3" opacity="0.48">
+      <path d="M17 -11 L171 58"/>
+      <path d="M14 1 L171 72"/>
+      <path d="M11 13 L171 86"/>
+      <path d="M8 25 L171 100"/>
+    </g>
+    <path d="M0 83 L180 164" fill="none" stroke="#B9D8DF" stroke-width="2" opacity="0.3"/>
+  </g>
+</svg>

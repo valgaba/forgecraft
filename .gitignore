@@ -1,0 +1,25 @@
+# Resultados de compilación y distribución
+/out/*
+!/out/README.md
+!/out/bin/
+/out/bin/*
+!/out/bin/README.md
+
+# Objetos y archivos generados por qmake y moc
+*.o
+moc_*
+qrc_*.cpp
+ui_*.h
+Makefile
+Makefile.*
+.qmake.stash
+
+# Configuración local de Qt Creator
+*.pro.user
+*.pro.user.*
+
+# Capturas de las pruebas (las del README viven en la raíz)
+/preview.png
+/minimized.png
+/process-dialog.png
+/process-dialog-eq.png
