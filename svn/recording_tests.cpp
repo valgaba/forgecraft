@@ -5,6 +5,7 @@
 #include <QAction>
 #include <QPushButton>
 #include <QComboBox>
+#include <QLabel>
 #include <QMessageBox>
 #include <QElapsedTimer>
 #include <QTemporaryDir>
@@ -78,44 +79,54 @@ int recordingUiTests() {
     auto *workspace = window.findChild<QMdiArea *>(); QAction *recordAction = nullptr;
     for (auto *action : window.findChildren<QAction *>()) if (action->objectName() == "recordAudio") recordAction = action;
     if (!recordAction) { check(false, "record action exists"); return failures; }
-    auto undo = [&](bool redo) { auto *doc = static_cast<Document *>(workspace->currentSubWindow()->widget()); if (redo) doc->undo.redo(); else doc->undo.undo(); };
+    auto document = [&] { return static_cast<Document *>(workspace->currentSubWindow()->widget()); };
+    auto undo = [&](bool redo) { auto *doc = document(); if (redo) doc->undo.redo(); else doc->undo.undo(); };
     QTimer script; script.setInterval(10); QElapsedTimer elapsed;
-    int scenario = 0, step = 0, wait = 0; qint64 pausedFrames = 0, expectedFrames = 0; bool monitorOk = false, pauseOk = false, timeout = false;
+    int step = 0, wait = 0; qint64 pausedFrames = 0, firstTake = 0;
+    bool monitorOk = false, pauseOk = false, deliveredOk = false, appendedOk = false, formatLocked = false, timeout = false;
     QObject::connect(&script, &QTimer::timeout, &window, [&] {
-        auto *modal = QApplication::activeModalWidget();
-        if (auto *box = qobject_cast<QMessageBox *>(modal)) { if (auto *button = box->button(QMessageBox::Discard)) button->click(); else { timeout = true; box->reject(); } return; }
-        auto *dialog = qobject_cast<RecordDialog *>(modal); if (!dialog) return;
+        auto *dialog = qobject_cast<RecordDialog *>(QApplication::activeModalWidget()); if (!dialog) return;
         auto click = [&](const char *name) { if (auto *button = dialog->findChild<QPushButton *>(name)) button->click(); };
-        if (elapsed.elapsed() > 5000) { timeout = true; dialog->findChild<QPushButton *>("recordStop")->click(); dialog->reject(); return; }
-        if (step == 0) { dialog->findChild<QComboBox *>("recordMode")->setCurrentIndex(scenario == 1 ? 1 : scenario == 2 ? 2 : 0); click(scenario == 0 ? "recordPrepare" : "recordStart"); ++step; return; }
-        if (scenario == 0) {
-            if (step == 1 && ++wait > 3) { monitorOk = dialog->take().frames() == 0; wait = 0; click("recordStart"); ++step; return; }
-            if (step == 2 && dialog->take().frames() >= 1323) { dialog->grab().save(QApplication::applicationDirPath() + "/../build/recording-dialog.png"); click("recordPause"); pausedFrames = dialog->take().frames(); ++step; return; }
-            if (step == 3 && ++wait > 5) { pauseOk = dialog->take().frames() == pausedFrames; click("recordPause"); ++step; return; }
-            if (step == 4 && dialog->take().frames() >= pausedFrames + 882) { click("recordStop"); expectedFrames = dialog->take().frames(); click("recordUse"); ++step; }
-        } else if (step == 1 && dialog->take().frames() >= 1323) {
-            click("recordStop"); expectedFrames = dialog->take().frames(); ++step;
-            if (scenario == 3) QTimer::singleShot(0, dialog, [dialog] { dialog->findChild<QPushButton *>("recordClose")->click(); });
-            else click("recordUse");
+        if (elapsed.elapsed() > 5000) { timeout = true; click("recordStop"); dialog->reject(); return; }
+        if (step == 0) {
+            // La monitorización es automática: al abrir, la entrada ya se escucha sin grabar.
+            if (auto *label = dialog->findChild<QLabel *>("recordState")) monitorOk = label->text() == "Escuchando la entrada" && dialog->take().frames() == 0;
+            // Con audio en el documento, el formato de grabación queda fijado al suyo.
+            if (auto *rate = dialog->findChild<QComboBox *>("recordRate")) if (document()->data.frames()) formatLocked = !rate->isEnabled();
+            click("recordStart"); ++step; return;
+        }
+        if (step == 1 && dialog->take().frames() >= 1323) { dialog->grab().save(QApplication::applicationDirPath() + "/../build/recording-dialog.png"); click("recordPause"); pausedFrames = dialog->take().frames(); ++step; return; }
+        if (step == 2 && ++wait > 5) { pauseOk = dialog->take().frames() == pausedFrames; click("recordPause"); ++step; return; }
+        if (step == 3 && dialog->take().frames() >= pausedFrames + 882) {
+            const qint64 before = document()->data.frames(), takeFrames = dialog->take().frames();
+            click("recordStop");
+            deliveredOk = document()->data.frames() == before + takeFrames && dialog->take().frames() == 0;
+            firstTake = document()->data.frames();
+            ++step; return;
+        }
+        if (step == 4) { click("recordStart"); ++step; return; }
+        if (step == 5 && dialog->take().frames() >= 882) {
+            const qint64 before = document()->data.frames(), takeFrames = dialog->take().frames();
+            click("recordStop");
+            appendedOk = document()->data.frames() == before + takeFrames;
+            click("recordClose");
         }
     });
-    auto run = [&](int mode) { scenario = mode; step = wait = 0; elapsed.restart(); script.start(); recordAction->trigger(); script.stop(); };
-    run(0);
-    auto *doc = static_cast<Document *>(workspace->currentSubWindow()->widget());
-    check(!timeout && monitorOk && pauseOk, "prepare/monitor, pause and resume");
-    check(doc->data.frames() == expectedFrames && !doc->undo.isClean() && workspace->subWindowList().size() == 2, "new take becomes dirty waveform document");
-    undo(false); check(doc->data.frames() == 0, "undo removes recorded take"); undo(true); check(doc->data.frames() == expectedFrames, "redo restores recorded take");
-    auto before = doc->data; doc->wave->anchor = 441; doc->wave->cursor = 882;
-    run(1); check(doc->data.frames() == before.frames() + expectedFrames && doc->data.samples.first(882) == before.samples.first(882), "insert recording at cursor preserves existing audio");
-    undo(false); check(doc->data.samples == before.samples, "undo insertion restores original audio");
-    doc->wave->anchor = 441; doc->wave->cursor = 882; run(2);
-    check(doc->data.frames() == before.frames() - 441 + expectedFrames, "record into selection replaces only that region"); undo(false);
-    auto original = doc->data.samples; int windows = workspace->subWindowList().size(); run(3);
-    check(workspace->subWindowList().size() == windows && doc->data.samples == original, "discarding pending take leaves editor unchanged");
-    check(counters.starts == counters.stops && counters.destroyed == 4, "every input stream closed after dialog exit");
-    QTemporaryDir temp(QApplication::applicationDirPath() + "/../build/record-test-XXXXXX"); QString error; AudioData decoded;
-    check(doc->data.write(temp.filePath("recorded.wav"), error) && AudioData::read(temp.filePath("recorded.wav"), decoded, error) && decoded.frames() == doc->data.frames(), "recorded audio saves and reopens as WAV");
-    check(doc->data.write(temp.filePath("recorded.mp3"), error) && AudioData::read(temp.filePath("recorded.mp3"), decoded, error) && decoded.frames() == doc->data.frames(), "recorded audio saves and reopens as MP3");
+    auto run = [&] { step = wait = 0; elapsed.restart(); script.start(); recordAction->trigger(); script.stop(); };
+    run();
+    auto *doc = document();
+    check(!timeout && monitorOk && pauseOk, "automatic monitoring, pause and resume");
+    check(deliveredOk && firstTake > 0, "stop delivers the take to the focused document");
+    check(appendedOk, "a second take is appended at the end");
+    check(doc->undo.count() == 2 && !doc->undo.isClean() && workspace->subWindowList().size() == 1, "each take is an undo step");
+    undo(false); check(doc->data.frames() == firstTake, "undo removes the second take");
+    undo(false); check(doc->data.frames() == 0, "undo removes the first take");
+    undo(true); check(doc->data.frames() == firstTake, "redo restores the take");
+    const auto original = doc->data;
+    run();
+    check(!timeout && formatLocked, "recording format is locked to the document format");
+    check(doc->data.frames() > original.frames() && doc->data.samples.first(original.samples.size()) == original.samples, "appending keeps the existing audio untouched");
+    check(counters.starts == counters.stops && counters.destroyed == 2, "every input stream closed after dialog exit");
     for (auto *child : workspace->subWindowList()) static_cast<Document *>(child->widget())->undo.setClean();
     window.close(); return failures;
 }

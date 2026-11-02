@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "dsp.h"
+#include "aboutdialog.h"
 #include "theme.h"
 #include <QApplication>
 #include <QStyle>
@@ -19,8 +20,13 @@
 #include <QStringList>
 #include <QDragEnterEvent>
 #include <QDoubleSpinBox>
+#include <QComboBox>
+#include <QSlider>
+#include <QTimer>
+#include <QPoint>
 #include <QDialogButtonBox>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QToolButton>
 #include <QProgressDialog>
 #include <QMenuBar>
@@ -45,6 +51,16 @@ static int selfTest() {
     check(b.frames() == a.frames() && b.rate == a.rate && b.channels == 2, "WAV metadata round trip");
     double delta = 0; for (qsizetype i = 0; i < qMin(a.samples.size(), b.samples.size()); ++i) delta = qMax(delta, double(std::abs(a.samples[i] - b.samples[i])));
     check(delta < 0.00005, "PCM16 round trip precision");
+    // 24 bits y 32 float: el WAV se escribe en la profundidad del documento.
+    AudioData hi = a; hi.bitDepth = 24; hi.floatFormat = false;
+    AudioData hiBack; bool ok24 = hi.write(temp.filePath("pcm24.wav"), error) && AudioData::read(temp.filePath("pcm24.wav"), hiBack, error)
+        && hiBack.bitDepth == 24 && !hiBack.floatFormat && hiBack.samples.size() == hi.samples.size();
+    double delta24 = 0; if (ok24) for (qsizetype i = 0; i < hiBack.samples.size(); ++i) delta24 = qMax(delta24, double(std::abs(hiBack.samples[i] - hi.samples[i])));
+    check(ok24 && delta24 < 1e-6, "PCM24 round trip precision");
+    AudioData fl = a; fl.bitDepth = 32; fl.floatFormat = true;
+    AudioData flBack; bool okf = fl.write(temp.filePath("float32.wav"), error) && AudioData::read(temp.filePath("float32.wav"), flBack, error)
+        && flBack.floatFormat && flBack.bitDepth == 32 && flBack.samples == fl.samples;
+    check(okf, "32-bit float WAV round trip");
     b.process(0, b.frames(), "normalize"); double peak = 0; for (float f : b.samples) peak = qMax(peak, double(std::abs(f))); check(std::abs(peak - 0.999) < 0.00001, "normalize peak");
     b.process(0, b.frames(), "fadeout"); check(b.samples.last() == 0, "fade out endpoint");
     b.process(0, 100, "silence"); bool silent = true; for (int i = 0; i < 200; ++i) silent &= b.samples[i] == 0; check(silent, "silence selected frames");
@@ -114,10 +130,8 @@ static void applyTheme(QApplication &app) {
 }
 
 int main(int argc, char **argv) {
-    QApplication app(argc, argv); app.setApplicationName("ForgeCraft"); app.setApplicationVersion("0.1.0"); app.setOrganizationName("ForgeCraft");
-    QPixmap emblem(16, 16); emblem.fill(Qt::transparent);
-    { QPainter p(&emblem); p.setPen(Qt::black); p.setBrush(Qt::white); p.drawRect(3, 1, 10, 13); p.setPen(Theme::RecordDot); QPolygon wave; wave << QPoint(1,8) << QPoint(4,8) << QPoint(5,3) << QPoint(7,13) << QPoint(9,4) << QPoint(11,10) << QPoint(15,8); p.drawPolyline(wave); }
-    app.setWindowIcon(QIcon(emblem));
+    QApplication app(argc, argv); app.setApplicationName("ForgeCraft"); app.setApplicationVersion("0.1.1"); app.setOrganizationName("ForgeCraft");
+    app.setWindowIcon(QIcon(QStringLiteral(":/icons/ForgeCraftAppIcon.png")));
     applyTheme(app);
     if (app.arguments().contains("--self-test")) return selfTest();
     if (app.arguments().contains("--smoke-test")) app.setAttribute(Qt::AA_DontUseNativeDialogs);
@@ -228,8 +242,29 @@ int main(int argc, char **argv) {
             QDragEnterEvent ignored(QPoint(20, 40), Qt::CopyAction, &remote, Qt::LeftButton, Qt::NoModifier); QApplication::sendEvent(workspace->viewport(), &ignored); ok &= !ignored.isAccepted();
             doc->wave->anchor = doc->wave->cursor = 0; doc->wave->update();
             auto *audioWindow = workspace->activeSubWindow();
-            trigger("&Nuevo"); auto *blank1 = workspace->activeSubWindow();
-            trigger("&Nuevo"); auto *blank2 = workspace->activeSubWindow();
+            // «Nuevo» abre el cuadro de formato: se acepta con los valores de omisión.
+            auto newDocument = [&](int rate, int channels, int depth) {
+                QTimer::singleShot(0, &window, [&, rate, channels, depth] {
+                    auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                    if (!dialog) return;
+                    dialog->grab().save(QApplication::applicationDirPath() + "/../build/new-document.png");
+                    if (auto *box = dialog->findChild<QComboBox *>("newRate")) box->setCurrentIndex(box->findData(rate));
+                    if (auto *radio = dialog->findChild<QRadioButton *>(QString("newDepth%1").arg(depth))) radio->setChecked(true);
+                    if (auto *radio = dialog->findChild<QRadioButton *>(QString("newChannels%1").arg(channels))) radio->setChecked(true);
+                    dialog->accept();
+                });
+                trigger("&Nuevo");
+            };
+            newDocument(44100, 2, 16); auto *blank1 = workspace->activeSubWindow();
+            newDocument(48000, 1, 24); auto *blank2 = workspace->activeSubWindow();
+            bool formatsOk = blank1 && blank2
+                && static_cast<Document *>(blank1->widget())->data.rate == 44100
+                && static_cast<Document *>(blank1->widget())->data.bitDepth == 16
+                && static_cast<Document *>(blank2->widget())->data.rate == 48000
+                && static_cast<Document *>(blank2->widget())->data.channels == 1
+                && static_cast<Document *>(blank2->widget())->data.bitDepth == 24;
+            ok &= formatsOk;
+            std::printf("%s UI new document dialog sets rate, channels and bit depth\n", formatsOk ? "PASS" : "FAIL");
             ok &= workspace->subWindowList().size() == 3;
             trigger("Mosaico"); trigger("Cascada");
             // Módulos sin marco (Opción A): la barra arrastra, los bordes
@@ -366,6 +401,76 @@ int main(int argc, char **argv) {
             ok &= inserted;
             std::printf("%s UI drag selection onto another module inserts it there\n", inserted ? "PASS" : "FAIL");
             if (inserted) { workspace->setActiveSubWindow(blank1); trigger("&Deshacer"); }
+            // Modo «Mezclar»: cada suelta abre el cuadro de mezcla, que la prueba
+            // acepta sola. El punto de destino se recalcula en cada suelta porque
+            // activar el módulo puede cambiar su geometría.
+            for (auto *action : window.findChildren<QAction *>()) if (action->objectName() == "dropMix") action->trigger();
+            int mixMode = 0;   // 0: volúmenes a 0 dB; 1: fragmento a -6 dB
+            QTimer mixResponder; mixResponder.setInterval(10);
+            QObject::connect(&mixResponder, &QTimer::timeout, &window, [&] {
+                auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                if (!dialog || dialog->objectName() != "mixDialog") return;
+                dialog->grab().save(QApplication::applicationDirPath() + "/../build/mix-dialog.png");
+                if (mixMode == 1) if (auto *slider = dialog->findChild<QSlider *>("mixSource")) slider->setValue(-60);
+                dialog->accept();
+            });
+            doc->wave->anchor = 0; doc->wave->cursor = 44100; doc->wave->update();
+            const int mixPressX = Theme::GutterWidth + 10;
+            auto dropSelection = [&](const QPoint &at) {
+                sendMouse(doc->wave, QEvent::MouseButtonPress, QPoint(mixPressX, doc->wave->height() / 2), Qt::LeftButton);
+                sendMouse(doc->wave, QEvent::MouseMove, doc->wave->mapFromGlobal(at), Qt::LeftButton);
+                sendMouse(doc->wave, QEvent::MouseButtonRelease, doc->wave->mapFromGlobal(at), Qt::NoButton);
+            };
+            auto mixDropPoint = [&] { return receiver->wave->mapToGlobal(QPoint(120, 90)); };
+            auto mixPosition = [&](const QPoint &point) { return receiver->wave->frameAt(receiver->wave->mapFromGlobal(point).x()); };
+            mixResponder.start();
+            blank1->raise(); app.processEvents();
+            const qint64 fragmentFrames2 = 44100, channels2 = doc->data.channels;
+            QPoint mixDrop = mixDropPoint();
+            const qint64 firstAt = mixPosition(mixDrop);
+            dropSelection(mixDrop);
+            const bool mixedOnce = firstAt == 0 && receiver->data.frames() == fragmentFrames2
+                && receiver->data.samples == doc->data.samples.mid(0, fragmentFrames2 * channels2);
+            mixDrop = mixDropPoint();
+            const qint64 blendAt = mixPosition(mixDrop);
+            const AudioData beforeBlend = receiver->data;
+            dropSelection(mixDrop);
+            bool blended = receiver->data.frames() == qMax(beforeBlend.frames(), blendAt + fragmentFrames2);
+            for (qint64 frame = blendAt; blended && frame < qMin(blendAt + fragmentFrames2, receiver->data.frames()); frame += 173) {
+                for (qsizetype channel = 0; channel < channels2 && blended; ++channel) {
+                    const float previous = frame < beforeBlend.frames() ? beforeBlend.samples[frame * channels2 + channel] : 0.0f;
+                    const float expected = float(std::clamp(double(previous) + double(doc->data.samples[(frame - blendAt) * channels2 + channel]), -1.0, 1.0));
+                    blended = std::abs(receiver->data.samples[frame * channels2 + channel] - expected) < 1e-6f;
+                }
+            }
+            ok &= mixedOnce && blended;
+            std::printf("%s UI mix dialog mixes with equal volumes\n", (mixedOnce && blended) ? "PASS" : "FAIL");
+            // Fragmento a -6 dB: la suma se pondera y el destino se mantiene.
+            mixDrop = mixDropPoint();
+            const qint64 gainAt = mixPosition(mixDrop);
+            const AudioData beforeGain = receiver->data;
+            mixMode = 1;
+            dropSelection(mixDrop);
+            mixResponder.stop();
+            const double sourceGain = std::pow(10.0, -6.0 / 20.0);
+            bool weighted = receiver->data.frames() == qMax(beforeGain.frames(), gainAt + fragmentFrames2);
+            for (qint64 frame = gainAt; weighted && frame < qMin(gainAt + fragmentFrames2, receiver->data.frames()); frame += 173) {
+                for (qsizetype channel = 0; channel < channels2 && weighted; ++channel) {
+                    const float previous = frame < beforeGain.frames() ? beforeGain.samples[frame * channels2 + channel] : 0.0f;
+                    const float expected = float(std::clamp(double(previous) + double(doc->data.samples[(frame - gainAt) * channels2 + channel]) * sourceGain, -1.0, 1.0));
+                    weighted = std::abs(receiver->data.samples[frame * channels2 + channel] - expected) < 1e-6f;
+                }
+            }
+            ok &= weighted;
+            std::printf("%s UI mix dialog applies the fragment volume in decibels\n", weighted ? "PASS" : "FAIL");
+            workspace->setActiveSubWindow(blank1);
+            trigger("&Deshacer");
+            const bool undoneBlend = receiver->data.samples == beforeGain.samples;
+            trigger("&Deshacer"); trigger("&Deshacer");
+            const bool undoneAll = receiver->data.frames() == 0;
+            ok &= undoneBlend && undoneAll;
+            std::printf("%s UI each mix drop is one undo step\n", (undoneBlend && undoneAll) ? "PASS" : "FAIL");
+            for (auto *action : window.findChildren<QAction *>()) if (action->objectName() == "dropInsert") action->trigger();
             // Copiar en un módulo y pegar en otro.
             workspace->setActiveSubWindow(audioWindow);
             doc->wave->anchor = 0; doc->wave->cursor = 44100; doc->wave->update();
@@ -428,6 +533,7 @@ int main(int argc, char **argv) {
             doc->undo.setClean();
             workspace->closeAllSubWindows(); QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete); app.processEvents();
             ok &= workspace->subWindowList().isEmpty();
+            QTimer::singleShot(0, &window, [&] { if (auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget())) dialog->accept(); });
             trigger("&Nuevo"); responseMode = 0; effectResponder.start(); runEffect("insert_silence"); effectResponder.stop();
             auto *fresh = static_cast<Document *>(workspace->currentSubWindow()->widget());
             bool emptyInsert = fresh->data.frames() == 44100 && window.findChild<QMenu *>("effectsMenu")->isEnabled();
@@ -440,6 +546,12 @@ int main(int argc, char **argv) {
             workspace->closeAllSubWindows(); QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete); app.processEvents();
             std::printf("%s UI empty-document insert/undo/menu state; %s UI background drop preserves empty window\n", emptyInsert ? "PASS" : "FAIL", background ? "PASS" : "FAIL");
             ok &= recordingUiTests() == 0;
+            // Ventana «Acerca de»: se abre, se captura y se cierra.
+            ok &= !qApp->windowIcon().isNull();
+            auto *about = new AboutDialog(&window);
+            about->show(); app.processEvents();
+            ok &= about->grab().save(QApplication::applicationDirPath() + "/../build/about.png");
+            about->close(); app.processEvents();
             std::printf("%s UI: editing, MDI activation, cascade, tile, zoom, scroll, recording, close and render\n", ok ? "PASS" : "FAIL"); std::fflush(stdout);
             app.exit(ok ? 0 : 1);
         });

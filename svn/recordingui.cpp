@@ -3,24 +3,30 @@
 #include <QMessageBox>
 
 void MainWindow::recordAudio() {
-    stop(); auto *target = current();
-    const AudioData original = target ? target->data : AudioData{};
-    qint64 first = target ? target->wave->first() : 0, last = target ? target->wave->last() : 0;
-    RecordDialog dialog(original, first, last, this, recordingSource ? recordingSource() : nullptr);
-    if (dialog.exec() != QDialog::Accepted) return;
-    auto take = dialog.take();
-    auto result = Recording::merge(original, take, dialog.mode(), dialog.position(), dialog.selectionEnd());
-    bool newWindow = dialog.mode() == Recording::NewDocument || !target;
-    if (!result.error.isEmpty()) {
-        const QString reason = result.error;
-        result = Recording::merge(original, take, Recording::NewDocument, 0, 0); newWindow = true;
-        if (!result.error.isEmpty()) { QMessageBox::warning(this, "Añadir grabación", result.error); return; }
-        QMessageBox::information(this, "Toma conservada", reason + "\nLa toma se abrirá en una ventana nueva.");
-    }
-    if (newWindow) {
-        AudioData empty; empty.rate = take.rate; empty.channels = take.channels;
-        addDocument(empty); target = current(); target->name = "Grabación " + QString::number(++recordingNumber);
-    }
-    commit(target, result.audio, "Grabar audio", result.first, result.last);
-    target->wave->zoom = 1; target->wave->start = 0; target->wave->update();
+    stop();
+    auto *target = current();
+    const AudioData destination = target ? target->data : AudioData{};
+    RecordDialog dialog(destination, target ? target->wave->first() : 0, target ? target->wave->last() : 0, this, recordingSource ? recordingSource() : nullptr);
+    // Cada toma terminada va directamente al documento enfocado; si ya tiene
+    // audio, se añade al final y queda como una operación de deshacer.
+    dialog.applyTake = [this, &dialog, target](const AudioData &take) {
+        Document *document = target;
+        if (!document) {
+            AudioData empty; empty.rate = take.rate; empty.channels = take.channels; empty.bitDepth = take.bitDepth;
+            addDocument(empty);
+            document = current();
+            if (document) document->name = "Grabación " + QString::number(++recordingNumber);
+        }
+        if (!document || !take.frames()) return false;
+        const qint64 end = document->data.frames();
+        auto result = Recording::merge(document->data, take, Recording::Insert, end, end);
+        if (!result.error.isEmpty()) { QMessageBox::warning(&dialog, "Añadir grabación", result.error); return false; }
+        commit(document, result.audio, "Grabar audio", result.first, result.last);
+        document->wave->anchor = result.first;
+        document->wave->cursor = result.last;
+        document->wave->start = qMax(qint64(0), result.last - document->wave->visibleFrames());
+        document->wave->update();
+        return true;
+    };
+    dialog.exec();
 }

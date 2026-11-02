@@ -494,3 +494,97 @@ QSlider::handle:vertical {
     margin: 0 -6px;
 }
 QSlider::handle:vertical:hover { background-color: #dfdbd2; border-color: #dfdbd2; }
+
+/* == 14. Ventana «Acerca de» ============================================= */
+#FormAbout {
+    background-color: #262c3b;
+    border: 1px solid #333b4f;
+}
+#FormAbout QLabel {
+    background: transparent;
+    border: none;
+    color: #dfdbd2;
+    font-size: 12px;
+}
+#FormAbout QLabel#AboutDescription { font-size: 13px; }
+#FormAbout QLabel#AboutMuted, #FormAbout QLabel#AboutVersion { color: #8a8d96; font-size: 11px; }
+#FormAbout QLabel#AboutBuildDate { color: #8a8d96; font-size: 11px; }
+#FormAbout QLabel#AboutAuthor { color: #80a4ae; font-size: 18px; font-weight: bold; }
+#FormAbout QLabel#AboutName { color: #f4f4f7; font-size: 38px; font-weight: bold; letter-spacing: 3px; }
+#FormAbout QLabel#AboutCredits, #FormAbout QLabel#AboutCopyright { font-size: 11px; }
+#FormAbout QLabel#AboutWebsite { font-size: 12px; }
+
+/* == 15. Documento nuevo ================================================= */
+QDialog#newAudioDialog { background-color: #181e2c; }
+QDialog#newAudioDialog QGroupBox#newGroup {
+    background-color: #20242e;
+    border: 1px solid #333b4f;
+    border-radius: 2px;
+    color: #8a8d96;
+    margin-top: 12px;
+    padding: 10px 12px 8px 12px;
+}
+QDialog#newAudioDialog QGroupBox#newGroup::title {
+    subcontrol-origin: margin;
+    left: 8px;
+    padding: 0 4px;
+    color: #80a4ae;
+}
+QDialog#newAudioDialog QRadioButton { background: transparent; color: #dfdbd2; spacing: 8px; min-height: 20px; }
+QRadioButton::indicator {
+    width: 16px;
+    height: 16px;
+    min-width: 16px;
+    min-height: 16px;
+    max-width: 16px;
+    max-height: 16px;
+}
+QRadioButton::indicator:unchecked { image: url(:/icons/radio-off.svg); }
+QRadioButton::indicator:checked { image: url(:/icons/radio-on.svg); }
+QRadioButton::indicator:disabled { image: url(:/icons/radio-off.svg); opacity: 0.4; }
+QDialog#newAudioDialog QLabel#newMaxTime {
+    color: #80a4ae;
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 15px;
+}
+
+/* == 16. Cuadro de mezcla ================================================ */
+QDialog#mixDialog { background-color: #181e2c; }
+
+/* Paneles de origen y destino del cuadro de mezcla. */
+QDialog#mixDialog QGroupBox#mixPanel {
+    background-color: #20242e;
+    border: 1px solid #333b4f;
+    border-radius: 2px;
+    color: #8a8d96;
+    margin-top: 12px;
+    padding: 10px 12px 8px 12px;
+}
+QDialog#mixDialog QGroupBox#mixPanel::title {
+    subcontrol-origin: margin;
+    left: 8px;
+    padding: 0 4px;
+    color: #80a4ae;
+}
+QDialog#mixDialog QLabel#mixValue {
+    color: #80a4ae;
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 13px;
+}
+
+/* == 17. Opciones generales ============================================== */
+QDialog#optionsDialog { background-color: #181e2c; }
+QDialog#optionsDialog QGroupBox#optionsGroup {
+    background-color: #20242e;
+    border: 1px solid #333b4f;
+    border-radius: 2px;
+    color: #8a8d96;
+    margin-top: 12px;
+    padding: 10px 12px 8px 12px;
+}
+QDialog#optionsDialog QGroupBox#optionsGroup::title {
+    subcontrol-origin: margin;
+    left: 8px;
+    padding: 0 4px;
+    color: #80a4ae;
+}

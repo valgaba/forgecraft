@@ -2,10 +2,19 @@
 #include "theme.h"
 #include <QApplication>
 #include <QPainter>
+#include <QFontMetrics>
+#include <QPolygonF>
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <cmath>
 #include <algorithm>
+
+namespace {
+QString markerTime(qint64 frames, int rate) {
+    const qint64 ms = frames * 1000 / qMax(1, rate);
+    return QString("%1:%2:%3,%4").arg(ms / 3600000, 2, 10, QChar('0')).arg(ms / 60000 % 60, 2, 10, QChar('0')).arg(ms / 1000 % 60, 2, 10, QChar('0')).arg(ms % 1000, 3, 10, QChar('0'));
+}
+}
 
 Waveform::Waveform(QWidget *parent) : QWidget(parent) { setMinimumSize(320, 100); setFocusPolicy(Qt::StrongFocus); setMouseTracking(true); }
 qint64 Waveform::visibleFrames() const { return audio ? qMax(qint64(16), qint64(audio->frames() / zoom)) : 16; }
@@ -69,6 +78,65 @@ void Waveform::paintEvent(QPaintEvent *) {
             p.setPen(selected ? Theme::Text : Theme::Accent); p.drawLine(x, mid - int(hi * amplitude), x, mid - int(lo * amplitude));
         }
     }
+    // Fantasma del fragmento arrastrado: se dibuja en el destino, en la posición
+    // donde caería, para ver el tramo antes de soltarlo.
+    if (previewSamples && previewAt >= 0 && !empty) {
+        const qint64 frames = qMax(qint64(1), previewLast - previewFirst);
+        const int startX = xAt(previewAt), endX = xAt(previewAt + frames);
+        const int fromX = qMax(left + 1, startX), toX = qMin(right, endX);
+        if (toX > fromX && previewChannels > 0) {
+            const QColor ghost = Theme::DragGhost;
+            p.fillRect(QRect(fromX, ruler, toX - fromX, bottom - ruler), QColor(ghost.red(), ghost.green(), ghost.blue(), 52));
+            const double ghostBand = double(bottom - ruler) / audio->channels;
+            p.setPen(QColor(ghost.red(), ghost.green(), ghost.blue(), 235));
+            for (int channel = 0; channel < audio->channels; ++channel) {
+                const int mid = ruler + int(channel * ghostBand) + int(ghostBand / 2);
+                const double amplitude = ghostBand * 0.47;
+                const int source = qMin(channel, previewChannels - 1);
+                for (int x = fromX; x < toX; ++x) {
+                    const int span = qMax(1, endX - startX);
+                    qint64 a = previewFirst + qint64(double(x - startX) / span * frames);
+                    qint64 b = previewFirst + qint64(double(x + 1 - startX) / span * frames);
+                    a = qBound(previewFirst, a, previewLast - 1);
+                    b = qBound(a + 1, b, previewLast);
+                    float low = 0, high = 0;
+                    for (qint64 frame = a; frame < b; ++frame) {
+                        const float value = previewSamples[frame * previewChannels + source];
+                        low = qMin(low, value); high = qMax(high, value);
+                    }
+                    p.drawLine(x, mid - int(high * amplitude), x, mid - int(low * amplitude));
+                }
+            }
+            p.setPen(QPen(ghost, 1));
+            if (startX >= left) p.drawLine(startX, ruler, startX, bottom);
+            if (endX <= right) p.drawLine(endX, ruler, endX, bottom);
+        }
+    }
+    // Marcas: banderín en la regla y línea de puntos sobre la onda. La marca
+    // seleccionada o bajo el puntero muestra su nombre.
+    for (int index = 0; index < audio->markers.size(); ++index) {
+        const Marker &marker = audio->markers[index];
+        const int x = xAt(marker.frame);
+        if (x < left || x > right) continue;
+        const bool highlighted = index == selectedMarker || index == hoverMarker;
+        const QColor markerColor = highlighted ? Theme::Marker.lighter(135) : Theme::Marker;
+        p.setPen(QPen(markerColor, 1, Qt::DashLine));
+        p.drawLine(x, ruler, x, bottom);
+        p.setPen(Qt::NoPen);
+        p.setBrush(markerColor);
+        p.drawPolygon(QPolygonF{QPointF(x, 2), QPointF(x + 7, 5), QPointF(x + 7, 12), QPointF(x, 9)});
+        p.drawRect(QRectF(x - 0.5, 2, 1.5, ruler - 3));
+        if (highlighted) {
+            // Etiqueta sobre la onda, con fondo, para que se lea siempre.
+            const QString label = QString("%1  %2").arg(marker.name, markerTime(marker.frame, audio->rate));
+            const QFontMetrics metrics(p.font());
+            const QRect box(x + 8, ruler + 2, metrics.horizontalAdvance(label) + 10, metrics.height() + 2);
+            p.setPen(Qt::NoPen); p.setBrush(Theme::Panel);
+            p.drawRect(box);
+            p.setPen(Theme::Text);
+            p.drawText(box.adjusted(5, 0, -5, 0), Qt::AlignCenter, label);
+        }
+    }
     p.save(); p.setClipRect(QRect(left, ruler, right - left, bottom - ruler));
     if (!empty) { p.setPen(Theme::Text); p.drawLine(xAt(cursor), ruler, xAt(cursor), bottom); }
     if (playhead >= 0) { p.setPen(Theme::Playhead); p.drawLine(xAt(playhead), ruler, xAt(playhead), bottom); }
@@ -86,8 +154,43 @@ void Waveform::updateSelectionCursor(const QPoint &pos) {
     if (shape == Qt::ArrowCursor) QWidget::unsetCursor(); else QWidget::setCursor(shape);
 }
 
+void Waveform::setDropPreview(const float *samples, int channels, qint64 first, qint64 last, qint64 at) {
+    previewSamples = samples; previewChannels = channels;
+    previewFirst = first; previewLast = last; previewAt = at;
+    update();
+}
+void Waveform::clearDropPreview() {
+    if (!previewSamples) return;
+    previewSamples = nullptr; previewChannels = 0; previewAt = -1;
+    update();
+}
+int Waveform::markerAt(const QPoint &pos) const {
+    if (!audio || pos.y() > Theme::RulerHeight) return -1;
+    for (int index = 0; index < audio->markers.size(); ++index)
+        if (qAbs(pos.x() - xAt(audio->markers[index].frame)) <= 7) return index;
+    return -1;
+}
+void Waveform::updateHover(const QPoint &pos) {
+    const int index = markerAt(pos);
+    if (index >= 0) {
+        if (index != hoverMarker) { hoverMarker = index; update(); }
+        setCursor(Qt::PointingHandCursor);
+        return;
+    }
+    if (hoverMarker >= 0) { hoverMarker = -1; update(); }
+    // Fuera de los banderines manda el cursor de los extremos de la selección.
+    updateSelectionCursor(pos);
+}
 void Waveform::mousePressEvent(QMouseEvent *e) {
     if (e->button() != Qt::LeftButton) return;
+    const int markerIndex = markerAt(e->position().toPoint());
+    if (markerIndex >= 0) {
+        selectedMarker = markerIndex;
+        anchor = cursor = audio->markers[markerIndex].frame;
+        draggingOut = false; draggingSelection = false; pressMoved = false; adjustingEdge = 0;
+        update(); emit selectionChanged();
+        return;
+    }
     const int x = int(e->position().x());
     const qint64 frame = at(x);
     draggingOut = false;
@@ -114,7 +217,7 @@ void Waveform::mousePressEvent(QMouseEvent *e) {
 }
 
 void Waveform::mouseMoveEvent(QMouseEvent *e) {
-    if (!(e->buttons() & Qt::LeftButton)) { updateSelectionCursor(e->position().toPoint()); return; }
+    if (!(e->buttons() & Qt::LeftButton)) { updateHover(e->position().toPoint()); return; }
     const QPoint global = e->globalPosition().toPoint();
     if (!pressMoved && (global - pressGlobal).manhattanLength() > QApplication::startDragDistance()) pressMoved = true;
     if (adjustingEdge) {
@@ -131,6 +234,7 @@ void Waveform::mouseMoveEvent(QMouseEvent *e) {
             draggingOut = true;
             setCursor(Qt::DragMoveCursor);
         }
+        if (draggingOut && dragStatus) dragStatus(first(), last(), global);
         return;
     }
     cursor = at(int(e->position().x()));
@@ -154,6 +258,7 @@ void Waveform::mouseReleaseEvent(QMouseEvent *e) {
     draggingOut = false;
     draggingSelection = false;
     pressMoved = false;
+    if (dragged && dragFinished) dragFinished();
     if (copyOut) {
         unsetCursor();
         if (dragOut && selectedLast > selectedFirst) dragOut(selectedFirst, selectedLast, e->globalPosition().toPoint());
@@ -166,7 +271,21 @@ void Waveform::mouseReleaseEvent(QMouseEvent *e) {
     updateSelectionCursor(e->position().toPoint());
 }
 
-void Waveform::mouseDoubleClickEvent(QMouseEvent *) { if (audio) { anchor = 0; cursor = audio->frames(); update(); emit selectionChanged(); } }
+void Waveform::mouseDoubleClickEvent(QMouseEvent *e) {
+    const int markerIndex = markerAt(e->position().toPoint());
+    if (markerIndex >= 0) { if (markerRename) markerRename(markerIndex); return; }
+    if (!audio) return;
+    // Doble clic en la zona entre dos marcas: selecciona ese tramo.
+    const qint64 frame = at(int(e->position().x()));
+    qint64 before = -1, after = -1;
+    for (const auto &marker : audio->markers) {
+        if (marker.frame <= frame && (before < 0 || marker.frame > before)) before = marker.frame;
+        if (marker.frame >= frame && (after < 0 || marker.frame < after)) after = marker.frame;
+    }
+    if (before >= 0 && after > before) { anchor = before; cursor = after; }
+    else { anchor = 0; cursor = audio->frames(); }
+    update(); emit selectionChanged();
+}
 void Waveform::wheelEvent(QWheelEvent *e) {
     if (!audio) return;
     if (e->modifiers() & Qt::ControlModifier) zoomBy(e->angleDelta().y() > 0 ? 2 : 0.5);

@@ -1,6 +1,6 @@
-# ForgeCraft 0.1
+# ForgeCraft 0.1.1
 
-Editor de audio para Windows, inspirado en la estética y el flujo de los editores clásicos como Sound Forge 4.5. Implementación propia en, C++17 y MinGW 11.2 de 64 bits**.
+Editor de audio para Windows, inspirado en la estética y el flujo de los editores clásicos como Sound Forge 4.5. Implementación propia en **Qt Widgets 6.7.0, C++17 y MinGW 11.2 de 64 bits**, el mismo kit configurado en Radit.
 
 ![Editor con dos documentos abiertos](forgecraft.png)
 
@@ -10,12 +10,15 @@ Editor de audio para Windows, inspirado en la estética y el flujo de los editor
 |---|---|
 | [![Diálogo de proceso con sliders](forgecraft-proceso.png)](forgecraft-proceso.png) | [![Módulo minimizado al pie](forgecraft-minimizado.png)](forgecraft-minimizado.png) |
 | Diálogos de Proceso y Efectos con sliders, pie de selección y Previsualizar/Bypass. | Documento minimizado como botón al pie del área de trabajo. |
-| [![Diálogo de grabación](forgecraft-grabacion.png)](forgecraft-grabacion.png) | |
-| Grabación con monitorización, pausa y formato. | |
+| [![Diálogo de grabación](forgecraft-grabacion.png)](forgecraft-grabacion.png) | [![Cuadro de documento nuevo](forgecraft-nuevo.png)](forgecraft-nuevo.png) |
+| Grabación con monitorización permanente; cada toma va al documento al detener. | Documento nuevo: frecuencia, profundidad y canales. |
+
+| [![Ventana Acerca de](forgecraft-acerca.png)](forgecraft-acerca.png) | [![Cuadro de mezcla](forgecraft-mezcla.png)](forgecraft-mezcla.png) |
+| Ventana «Acerca de» con la disposición de Radit. | Mezcla al arrastrar entre ventanas: volumen de cada parte y desplazamiento. |
 
 ## Descarga
 
-El paquete para Windows de 64 bits se publica en la página de *Releases* del repositorio: descomprimir `forgecraft_0_1_0.zip` y ejecutar `forgecraft_0_1_0\forgecraft.exe`. No requiere instalación. El paquete incluye las DLL de Qt, los plugins, los códecs MP3, la hoja de estilo y las licencias; los detalles están en `README.txt` del propio paquete.
+El paquete para Windows de 64 bits se publica en la página de *Releases* del repositorio: descomprimir `forgecraft_0_1_1.zip` y ejecutar `forgecraft_0_1_0\forgecraft.exe`. No requiere instalación. El paquete incluye las DLL de Qt, los plugins, los códecs MP3, la hoja de estilo y las licencias; los detalles están en `README.txt` del propio paquete.
 
 ## Estructura
 
@@ -23,7 +26,6 @@ El paquete para Windows de 64 bits se publica en la página de *Releases* del re
 forgecraft/
 ├── svn/                  Código fuente y proyecto de Qt Creator
 │   ├── forgecraft.pro
-│   ├── build.ps1         Script de compilación
 │   ├── *.cpp, *.h        Editor, audio y pruebas
 │   ├── style/            Hoja de estilo del tema
 │   ├── icons/            Iconos SVG
@@ -53,6 +55,8 @@ La apariencia sigue la identidad visual de Radit, según el análisis de `docs/a
 
 - `svn/style/forgecraft.qss` es la fuente principal del aspecto: paleta oscura (`#181e2c`, `#20242e`, `#252b39`), bordes `#333b4f`, texto `#dfdbd2`/`#8a8d96` y acento `#80A4AE`. Está versionada y se carga desde la carpeta del ejecutable, de modo que se puede ajustar sin recompilar; si falta, se usa la copia incrustada en `forgecraft.qrc`.
 - `svn/theme.h` y `svn/theme.cpp` contienen lo que la hoja no alcanza: la paleta de respaldo de Qt (para las flechas y controles que dibuja el estilo), las constantes con nombre de la forma de onda y los medidores, y el acceso a los iconos.
+- El icono de la aplicación es la letra **F** construida como la **R** de Radit: cuerpo con degradado, franjas diagonales y la letra como máscara. Se genera desde `svn/icons/ForgeCraftAppIcon.svg` + `ForgeCraftLogo.svg` con `svn/tools/build-brand-icon.cpp`, que produce `ForgeCraftAppIcon.png` (ventana y Acerca de) y `forgecraft.ico` (icono del ejecutable mediante `forgecraft.rc`). Para regenerarlo, compilar esa herramienta con el kit (`QtSvg`, `QtGui`, `QtCore`) y ejecutarla pasando `svn/icons` como argumento.
+- **Ayuda → Acerca de ForgeCraft** abre la ventana `FormAbout`, con la disposición de Radit: descripción y autor a la izquierda, logotipo y versión en el centro, créditos y licencia a la derecha, y la línea de acento en la parte inferior.
 - Los iconos son SVG del set de Radit (`svn/icons`), incrustados en `forgecraft.qrc` con nombre de recurso propio (`:/icons/play.svg`, `:/icons/open.svg`…). Se cargan con el motor de iconos SVG de Qt, así que la distribución incluye `Qt6Svg.dll`, el plugin `iconengines/qsvgicon.dll` y `imageformats/qsvg.dll`.
 - El estilo de Qt es **Fusion**, que dibuja con la paleta y evita restos claros del tema nativo de Windows.
 - Las subventanas MDI no usan el marco del sistema: cada módulo dibuja su barra de título (`Frame#framebarra`) con minimizar y cerrar. Arrastrar la barra mueve el módulo, el doble clic lo maximiza y los bordes izquierdo, derecho e inferior redimensionan el módulo; el puntero cambia de forma al entrar en la zona de agarre y una pequeña marca en la esquina inferior derecha lo recuerda. La franja de la barra de título queda reservada para mover, así que no redimensiona.
@@ -68,15 +72,17 @@ Los valores de la hoja están ampliados respecto a Radit (barra de desplazamient
 
 - Ventanas de audio MDI superpuestas, con cascada y mosaico, con módulos de marco propio (barra de título con minimizar y cerrar, y bordes redimensionables).
 - Interfaz oscura con la identidad visual de Radit: superficies planas, acento `#80A4AE` y formas de onda sobre lienzo oscuro con reglas de tiempo por documento.
-- Medidores verticales de pico estéreo a la derecha y transporte inferior, con controles adicionales en cada documento.
+- Medidores verticales de pico estéreo a la derecha y transporte inferior, con controles adicionales en cada documento. **Opciones → Opciones generales…** (Ctrl+,) permite elegir el **dispositivo de salida** (con un botón **Probar** que reproduce un tono) y se guarda para las próximas sesiones.
 - Abrir WAV mono/estéreo PCM 8, 16, 24 y 32 bits, o float de 32 bits.
 - Abrir MP3 mono/estéreo, incluidos archivos con bitrate variable.
-- Guardar WAV PCM de 16 bits, o de 8 bits tras Convert to 8-Bit, con sustitución atómica del archivo.
+- **Nuevo** abre un cuadro con frecuencia (8.000 a 192.000 Hz), profundidad (8, 16, 24 bits o 32 float), canales (mono/estéreo) y el tiempo máximo de edición; el documento se crea con ese formato.
+- Guardar WAV en la profundidad del documento (8, 16, 24 bits o 32 float), con sustitución atómica del archivo.
 - Guardar MP3 con LAME a 128, 192, 256 o 320 kbps CBR; cabecera LAME con duración y datos para reproducción sin huecos.
 - Selección con ratón, doble clic para seleccionar todo, zoom y desplazamiento.
 - Los extremos de la selección se arrastran: al acercar el puntero a uno de ellos cambia a flecha doble y se puede ampliar o reducir la selección desde ese borde, con el otro extremo fijo.
-- Arrastrar una parte seleccionada fuera de la forma de onda la copia: si se suelta sobre el área de trabajo se abre un documento nuevo con ese fragmento, y si se suelta sobre otro módulo se inserta en su documento en el punto donde se suelta (deshacible allí). El documento de origen no cambia.
+- Arrastrar una parte seleccionada fuera de la forma de onda la copia: si se suelta sobre el área de trabajo se abre un documento nuevo con ese fragmento, y si se suelta sobre otro módulo se coloca en su documento en el punto donde se suelta (deshacible allí). Mientras se arrastra, la barra de estado muestra la **duración del fragmento** y la ventana sobre la que se soltaría, y en esa ventana se dibuja el **fantasma del tramo** en la posición donde caería. El documento de origen no cambia. **Edición → Al soltar en otra ventana** elige qué se hace: **Insertar en el punto de destino** (por omisión) o **Mezclar con el audio de destino**. Al mezclar se abre un cuadro con dos **sliders verticales** (volumen del fragmento y del destino, de silencio a +15 dB), presets (50/50, voz sobre mezcla, instrumento sobre mezcla), un **desplazamiento** de hasta medio segundo y **Previsualizar**, que reproduce la mezcla con los valores actuales sin aplicarla; la mezcla se satura a ±1 y amplía el documento si el fragmento sobrepasa el final. Cada mezcla es una sola operación de deshacer.
 - Copiar o cortar una selección y pegarla en otro módulo, con el portapapeles compartido entre documentos.
+- **Marcas de posición**: **M** inserta una marca en el cursor (Marca 01, Marca 02…), dibujada en **rojo** con un banderín en la regla, línea de puntos sobre la onda y su nombre y hora al pasar el puntero o al seleccionarla. **Doble clic** en el banderín la renombra; **botón derecho** sobre él abre el menú con **Renombrar** y **Eliminar**; **Mayús+M** elimina la más cercana al cursor. **Doble clic entre dos marcas** selecciona ese tramo. Las marcas se desplazan al insertar, pegar o recortar, y viajan con el audio al copiar o arrastrar un fragmento.
 - Menú contextual con el botón derecho sobre el área de trabajo y sobre la forma de onda, con las mismas acciones que el menú Edición (deshacer, rehacer, cortar, copiar, pegar, eliminar, recortar y seleccionar todo).
 - Los documentos sin archivo se numeran como `Sin título 1`, `Sin título 2`… con el primer número libre.
 - Reproducción de selección o desde el cursor, bucle y medidor de pico digital.
@@ -85,7 +91,7 @@ Los valores de la hoja están ampliados respecto a Radit (barra de desplazamient
 - Generador de tono sinusoidal y aviso de cambios sin guardar.
 - Arrastrar uno o varios WAV/MP3 sobre el escritorio de trabajo o una forma de onda abre una ventana nueva por archivo, sin sustituir el documento anterior.
 - Campos de inicio, final y duración de selección en cada ventana.
-- Grabación PCM de 16 bits con dispositivo de entrada, mono/estéreo, monitor de niveles, pausa/reanudación, límite de duración y ajuste DC.
+- Grabación PCM de 16 bits con dispositivo de entrada, mono/estéreo, monitorización permanente de niveles, pausa/reanudación, límite de duración y ajuste DC automático.
 
 Espacio reproduce/detiene; Esc detiene; Ctrl+rueda cambia el zoom; rueda desplaza la vista. Sin selección, los procesos afectan a todo el audio; borrar y recortar requieren selección. Pegar requiere la misma frecuencia y número de canales, salvo en un documento vacío.
 
@@ -113,19 +119,19 @@ Los codecs `libmpg123-0.dll` y `libmp3lame-0.dll` se cargan desde la carpeta del
 
 ## Grabación
 
-Abrir **Transporte → Grabar…**, pulsar **Ctrl+R**, o usar el botón rojo del transporte global o de una ventana de audio.
+Pulsar **Ctrl+R** o el botón rojo de la barra de transporte inferior o de una ventana de audio. El menú Transporte ya no existe: sus acciones están en esa barra.
 
 1. Elegir entrada, frecuencia y mono/estéreo. La captura usa PCM de 16 bits mediante la API `waveIn` de Windows; la disponibilidad de cada formato depende del dispositivo.
-2. Elegir el destino: **Toma en ventana nueva**, **Insertar en el cursor** o **Sustituir la selección**. Insertar/sustituir usa el formato del documento para evitar conversiones implícitas. La posición de inserción puede ajustarse en segundos.
-3. **Preparar** o **Monitorizar entrada** abre la entrada y muestra niveles sin añadir audio. La monitorización es visual, sin enviar el micrófono a los altavoces.
-4. **Grabar** inicia la toma; **Pausa** y **Continuar** excluyen el tiempo de pausa. **Detener** conserva la toma y **Continuar** permite seguir añadiendo audio. **Nueva toma** permite descartar la anterior tras confirmación.
-5. **Usar toma** añade el audio al editor como una operación de deshacer. Se puede editar y guardar como WAV o MP3. Cerrar con audio pendiente ofrece añadirlo, descartarlo o cancelar el cierre.
+2. El destino es siempre el documento enfocado. Si ya tiene audio, el formato de grabación queda fijado al suyo para evitar conversiones implícitas; si está vacío, se puede elegir la frecuencia y los canales.
+3. La **monitorización va siempre activa**: al abrir el diálogo la entrada ya está escuchándose, los medidores muestran el nivel y no se añade audio. Es visual, no envía el micrófono a los altavoces. Al cambiar de entrada o de formato la captura se reabre con los nuevos ajustes.
+4. **Grabar** inicia la toma; **Pausa** y **Continuar** excluyen el tiempo de pausa.
+5. **Detener** entrega la toma **directamente al documento enfocado**, como una operación de deshacer; si el documento ya tenía audio, la toma se añade **al final**, sin tocar lo anterior. El contador vuelve a cero y el diálogo sigue abierto y monitorizando, listo para otra toma. Al cerrar con una grabación en curso, lo capturado hasta ese momento se añade igualmente.
 
-La duración máxima puede limitarse en segundos; cero significa sin límite de tiempo adicional. Todas las tomas tienen un límite de 512 MB de muestras en memoria (aproximadamente 25 minutos a 44.100 Hz estéreo). El tiempo disponible se calcula sobre ese límite, no sobre el espacio de disco. El ajuste DC aplica un filtro paso alto a 20 Hz. La selección de formato se bloquea mientras existe audio pendiente. Si una inserción no cabe o no es compatible, la toma se conserva en una ventana nueva.
+La duración máxima puede limitarse en segundos; cero significa sin límite de tiempo adicional. Todas las tomas tienen un límite de 512 MB de muestras en memoria (aproximadamente 25 minutos a 44.100 Hz estéreo). El tiempo disponible se calcula sobre ese límite, no sobre el espacio de disco. El **ajuste DC** (filtro paso alto a 20 Hz) va activado siempre, sin casilla: quita la componente continua que algunas entradas añaden y que desplaza la forma de onda. La selección de formato se bloquea mientras existe audio pendiente. Si una inserción no cabe o no es compatible, la toma se conserva en una ventana nueva.
 
-Los errores de entrada se muestran sin modificar el documento. Si Windows bloquea el micrófono, revisar sus permisos para aplicaciones de escritorio; **Entradas…** abre los ajustes de sonido. Esta versión no incorpora grabación remota, sincronización externa, creación automática de regiones ni escucha de entrada por los altavoces.
+Los errores de entrada se muestran sin modificar el documento. Si Windows bloquea el micrófono, revisar sus permisos para aplicaciones de escritorio en **Configuración → Privacidad → Micrófono**. Esta versión no incorpora grabación remota, sincronización externa, creación automática de regiones ni escucha de entrada por los altavoces.
 
-Las pruebas automáticas de grabación usan una fuente PCM sintética y verifican conversión, monitorización, pausa, límites, inserción/sustitución, deshacer/rehacer, descarte y guardado WAV/MP3. También comprueban enumeración de entradas y errores nativos de dispositivo. No activan el micrófono: la captura física y sus niveles deben comprobarse con **Preparar** en el dispositivo del usuario. Vista de prueba: `out/build/recording-dialog.png`.
+Las pruebas automáticas de grabación usan una fuente PCM sintética y verifican conversión, monitorización automática, pausa, límites, inserción/sustitución, deshacer/rehacer, descarte y guardado WAV/MP3. También comprueban enumeración de entradas y errores nativos de dispositivo. No activan el micrófono: la captura física y sus niveles deben comprobarse abriendo el diálogo con un dispositivo real. Vista de prueba: `out/build/recording-dialog.png`.
 
 ## Compilar y verificar
 
@@ -135,7 +141,9 @@ Desde PowerShell en esta carpeta:
 .\build.ps1 -Deploy -Test
 ```
 
-El script usa el kit instalado en `C:\Qt`. Copia en `out/build/tools` los binutils de reemplazo que ya utiliza Radit para evitar el problema del cargador de Windows con el ensamblador antiguo. Antes de usarlos comprueba que enlazan un programa trivial; si esa comprobación falla (algunas versiones de binutils de MSYS2 fallan con `lseek: Bad file descriptor`), compila con las herramientas del propio kit de Qt y avisa por consola. Las dependencias de esas herramientas se encuentran en `C:\msys64\mingw64\bin`. No modifica Radit ni la instalación de Qt.
+El script vive en la raíz y hace todo el proceso (qmake, mingw32-make, despliegue y pruebas), como el de Sessions. Usa el kit instalado en `C:\Qt`. Copia en `out/build/tools` los binutils de reemplazo que ya utiliza Radit para evitar el problema del cargador de Windows con el ensamblador antiguo. Antes de usarlos comprueba que enlazan un programa trivial; si esa comprobación falla (algunas versiones de binutils de MSYS2 fallan con `lseek: Bad file descriptor`), compila con las herramientas del propio kit de Qt y avisa por consola. Las dependencias de esas herramientas se encuentran en `C:\msys64\mingw64\bin`. No modifica Radit ni la instalación de Qt.
+
+`-Destination` permite desplegar en otra carpeta (por omisión, `out\bin`).
 
 `-Deploy` copia también `svn/style/forgecraft.qss` junto al ejecutable, para poder ajustar el tema sin recompilar, y los componentes que necesitan los iconos: `Qt6Svg.dll`, `iconengines/qsvgicon.dll` e `imageformats/qsvg.dll`.
 
@@ -152,14 +160,14 @@ Start-Process .\out\bin\forgecraft.exe -ArgumentList '--smoke-test' -Wait
 Con el ejecutable ya desplegado:
 
 ```powershell
-.\package.ps1 -Version 0.1.0
+.\package.ps1 -Version 0.1.1
 ```
 
-Genera `out/packages/forgecraft_0_1_0.zip` con el ejecutable, la hoja de estilo, las DLL, los plugins (`platforms`, `iconengines`, `imageformats`), los códecs MP3, las licencias y los textos de instalación, y escribe `out/packages/SHA256SUMS.txt`. Ese zip y el archivo de sumas son los dos assets que se adjuntan a la Release; los binarios no se guardan en el repositorio.
+Genera `out/packages/forgecraft_0_1_1.zip` con el ejecutable, la hoja de estilo, las DLL, los plugins (`platforms`, `iconengines`, `imageformats`), los códecs MP3, las licencias y los textos de instalación, y escribe `out/packages/SHA256SUMS.txt`. Ese zip y el archivo de sumas son los dos assets que se adjuntan a la Release; los binarios no se guardan en el repositorio.
 
 ## Alcance de esta versión
 
-Todavía no reproduce todas las funciones de Sound Forge 4.5. Pendientes: otros formatos, marcadores, automatización avanzada de curvas, grabación remota/sincronizada y plugins externos. Audio y deshacer se mantienen en memoria; límite de apertura de 512 MB por archivo y de 512 MB de audio decodificado para MP3. Los procesos limitan su resultado a 512 MB de muestras. El guardado WAV usa PCM de 16 bits, salvo documentos configurados a 8 bits. Reproducción mediante la API waveOut de Windows; el medidor muestra picos de muestras, no true peak. No incorpora código, marcas gráficas ni recursos del programa original.
+Todavía no reproduce todas las funciones de Sound Forge 4.5. Pendientes: otros formatos, marcadores, automatización avanzada de curvas, grabación remota/sincronizada y plugins externos. Audio y deshacer se mantienen en memoria; límite de apertura de 512 MB por archivo y de 512 MB de audio decodificado para MP3. Los procesos limitan su resultado a 512 MB de muestras. El guardado WAV respeta la profundidad del documento: 8, 16, 24 bits o 32 float. Reproducción mediante la API waveOut de Windows; el medidor muestra picos de muestras, no true peak. No incorpora código, marcas gráficas ni recursos del programa original.
 
 ## Licencia
 

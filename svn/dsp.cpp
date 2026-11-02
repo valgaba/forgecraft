@@ -318,7 +318,7 @@ Dsp::Result Dsp::apply(const AudioData &source, qint64 first, qint64 last, const
             ++writeFrame;
         }
         if (id == "gapper") output.resize(writeFrame * channels);
-        if (id == "bit8") result.audio.bitDepth = 8;
+        if (id == "bit8") { result.audio.bitDepth = 8; result.audio.floatFormat = false; }
     }
     if (canceled(cancel)) { result.canceled = true; return result; }
     if (output.isEmpty() && n && (id == "time" || id == "pitch" || id == "resample")) return fail("No se pudo generar el audio procesado.");

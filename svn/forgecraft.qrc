@@ -23,5 +23,12 @@
         <file alias="icons/close.svg">icons/Close.svg</file>
         <file alias="icons/minimize.svg">icons/minimize.svg</file>
         <file alias="icons/restore.svg">icons/restore.svg</file>
+
+        <!-- Icono de la aplicación (letra F al estilo de Radit). -->
+        <file>icons/ForgeCraftAppIcon.png</file>
+
+        <!-- Indicadores de los botones de opción. -->
+        <file>icons/radio-off.svg</file>
+        <file>icons/radio-on.svg</file>
     </qresource>
 </RCC>

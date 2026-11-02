@@ -41,7 +41,9 @@ bool AudioData::read(const QString &path, AudioData &out, QString &error) {
         align != channels * (bits / 8) || pcm.size() % align) {
         error = "Formato no compatible. Usa WAV mono/estéreo PCM de 8/16/24/32 bits o float de 32 bits."; return false;
     }
-    AudioData result; result.rate = rate; result.channels = channels; result.bitDepth = bits == 8 ? 8 : 16;
+    AudioData result; result.rate = rate; result.channels = channels;
+    result.bitDepth = bits;                       // 8, 16, 24 o 32
+    result.floatFormat = format == 3;             // 32 en coma flotante
     result.samples.resize(pcm.size() / (bits / 8));
     for (qsizetype i = 0; i < result.samples.size(); ++i) {
         const char *p = pcm.constData() + i * (bits / 8);
@@ -59,14 +61,26 @@ bool AudioData::read(const QString &path, AudioData &out, QString &error) {
 bool AudioData::write(const QString &path, QString &error, int mp3Bitrate) const {
     error.clear();
     if (path.endsWith(".mp3", Qt::CaseInsensitive)) return Mp3::write(*this, path, mp3Bitrate, error);
-    int bytesPerSample = bitDepth == 8 ? 1 : 2; quint64 dataSize = quint64(samples.size()) * bytesPerSample;
+    const int bits = floatFormat ? 32 : (bitDepth == 8 ? 8 : bitDepth == 24 ? 24 : bitDepth == 32 ? 32 : 16);
+    const int bytesPerSample = bits / 8;
+    const quint16 format = floatFormat ? 3 : 1;
+    quint64 dataSize = quint64(samples.size()) * bytesPerSample;
     if (dataSize + 36 + (dataSize & 1) > 0xffffffffu) { error = "Audio demasiado largo para WAV RIFF."; return false; }
     QByteArray b("RIFF"); put32(b, 36 + dataSize + (dataSize & 1)); b += "WAVEfmt "; put32(b, 16);
-    put16(b, 1); put16(b, channels); put32(b, rate); put32(b, rate * channels * bytesPerSample);
-    put16(b, channels * bytesPerSample); put16(b, bytesPerSample * 8); b += "data"; put32(b, dataSize);
+    put16(b, format); put16(b, channels); put32(b, rate); put32(b, rate * channels * bytesPerSample);
+    put16(b, channels * bytesPerSample); put16(b, bits); b += "data"; put32(b, dataSize);
     for (float f : samples) {
-        if (bytesPerSample == 1) b.append(char(int(std::clamp(std::lround(double(f) * 128) + 128, 0l, 255l))));
-        else put16(b, quint16(qint16(std::lround(std::clamp(double(f), -1.0, 1.0) * 32767))));
+        const double v = std::clamp(double(f), -1.0, 1.0);
+        if (bits == 8) b.append(char(int(std::clamp(std::lround(v * 128) + 128, 0l, 255l))));
+        else if (bits == 16) put16(b, quint16(qint16(std::lround(v * 32767))));
+        else if (bits == 24) {
+            const qint32 n = qint32(std::lround(v * 8388607));
+            char p[3]{char(n & 0xff), char((n >> 8) & 0xff), char((n >> 16) & 0xff)};
+            b.append(p, 3);
+        } else if (floatFormat) {
+            const float sample = float(v);
+            char p[4]; std::memcpy(p, &sample, 4); b.append(p, 4);
+        } else put32(b, quint32(qint32(std::lround(v * 2147483647.0))));
     }
     if (dataSize & 1) b.append(char(0));
     QSaveFile file(path);
@@ -101,4 +115,30 @@ void AudioData::process(qint64 first, qint64 last, const QString &operation, dou
         if (operation == "silence") multiplier = 0;
         for (int c = 0; c < channels; ++c) samples[f * channels + c] = float(std::clamp(samples[f * channels + c] * multiplier, -1.0, 1.0));
     }
+}
+AudioData AudioData::fragment(qint64 first, qint64 last) const {
+    AudioData part;
+    part.rate = rate; part.channels = channels; part.bitDepth = bitDepth; part.floatFormat = floatFormat;
+    first = std::clamp(first, qint64(0), frames()); last = std::clamp(last, first, frames());
+    part.samples = samples.mid(first * channels, (last - first) * channels);
+    for (const auto &marker : markers)
+        if (marker.frame >= first && marker.frame <= last) part.markers.append({marker.frame - first, marker.name});
+    return part;
+}
+void AudioData::shiftMarkers(qint64 at, qint64 frames) {
+    for (auto &marker : markers) if (marker.frame >= at) marker.frame = qMax(qint64(0), marker.frame + frames);
+}
+void AudioData::removeMarkers(qint64 first, qint64 last) {
+    QVector<Marker> kept;
+    for (const auto &marker : markers) {
+        if (marker.frame < first) kept.append(marker);
+        else if (marker.frame > last) kept.append({marker.frame - (last - first), marker.name});
+    }
+    markers = kept;
+}
+void AudioData::trimMarkers(qint64 first, qint64 last) {
+    QVector<Marker> kept;
+    for (const auto &marker : markers)
+        if (marker.frame >= first && marker.frame <= last) kept.append({marker.frame - first, marker.name});
+    markers = kept;
 }

@@ -1,14 +1,21 @@
 #include "mainwindow.h"
 #include "recorddialog.h"
+#include "aboutdialog.h"
+#include "newaudiodialog.h"
+#include "mixdialog.h"
+#include "optionsdialog.h"
 #include "theme.h"
 #include <QApplication>
+#include <QActionGroup>
 #include <QMenu>
+#include <QSettings>
 #include <QMenuBar>
 #include <QToolBar>
 #include <QStatusBar>
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QInputDialog>
+#include <QLineEdit>
 #include <QFileInfo>
 #include <QVBoxLayout>
 #include <QCloseEvent>
@@ -34,6 +41,26 @@
 #endif
 #include <windows.h>
 #include <mmsystem.h>
+
+// Mezcla `fragment` sobre `destination` desde `at`, con el volumen de cada parte
+// y un desplazamiento opcional. Devuelve el resultado y el tramo modificado.
+static AudioData blendFragment(AudioData destination, const AudioData &fragment, qint64 at, double sourceGain, double targetGain, qint64 tune, qint64 &first, qint64 &last) {
+    const qint64 begin = at + tune;
+    first = qMax(qint64(0), begin);
+    last = begin + fragment.frames();
+    if (last <= 0) { last = first; return destination; }
+    if (last > destination.frames()) destination.samples.resize(last * destination.channels);
+    for (qint64 frame = first; frame < last; ++frame) {
+        const qint64 source = frame - begin;
+        if (source < 0 || source >= fragment.frames()) continue;
+        for (int channel = 0; channel < destination.channels; ++channel) {
+            const qsizetype index = frame * destination.channels + channel;
+            const double mixed = double(destination.samples[index]) * targetGain + double(fragment.samples[source * destination.channels + channel]) * sourceGain;
+            destination.samples[index] = float(std::clamp(mixed, -1.0, 1.0));
+        }
+    }
+    return destination;
+}
 #endif
 
 struct MainWindow::Playback {
@@ -203,6 +230,9 @@ Document::Document(QWidget *parent) : QWidget(parent) {
     wave->setToolTip("Arrastra para seleccionar. Arrastra un extremo de la selección para ajustarla. Arrastra desde dentro de la selección y suéltala fuera de la onda para abrirla como documento nuevo o insertarla en otro módulo.");
     wave->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(wave, &QWidget::customContextMenuRequested, this, [this](const QPoint &point) {
+        // Con el botón derecho sobre un banderín se abre el menú de la marca.
+        const int marker = wave->markerAt(point);
+        if (marker >= 0) { if (wave->markerMenu) wave->markerMenu(marker, wave->mapToGlobal(point)); return; }
         if (contextMenu) contextMenu(wave->mapToGlobal(point));
     });
     // El desplazamiento queda a la izquierda y las lupas a la derecha del módulo.
@@ -302,6 +332,7 @@ static QString timeText(qint64 frame, int rate) {
 }
 
 MainWindow::MainWindow(std::function<Recorder *()> source) : playback(new Playback), recordingSource(std::move(source)) {
+    outputDevice = QSettings().value("audio/outputDevice", quint32(0xffffffffu)).toUInt();
     setWindowTitle("ForgeCraft"); resize(1500, 850);
     workspace = new QMdiArea(this); workspace->setObjectName("workspace"); setCentralWidget(workspace);
     auto *file = menuBar()->addMenu("&Archivo");
@@ -309,14 +340,21 @@ MainWindow::MainWindow(std::function<Recorder *()> source) : playback(new Playba
     auto *view = menuBar()->addMenu("&Ver");
     auto *process = menuBar()->addMenu("&Proceso");
     auto *effects = menuBar()->addMenu("&Efectos");
-    auto *transport = menuBar()->addMenu("&Transporte");
+    auto *transport = new QMenu(this);   // sin menú visible: solo agrupa las acciones del transporte
+    auto *options = menuBar()->addMenu("&Opciones");
     auto *windows = menuBar()->addMenu("&Ventana");
     auto *help = menuBar()->addMenu("A&yuda");
     auto *tools = addToolBar("Archivo y edición"); tools->setObjectName("mainTools"); tools->setIconSize(QSize(18,18)); tools->setToolButtonStyle(Qt::ToolButtonIconOnly);
     auto add = [this](QMenu *menu, const QString &text, const QKeySequence &key, auto fn, const QString &icon = QString()) {
         QAction *a = menu->addAction(text); a->setShortcut(key); if (!icon.isEmpty()) a->setIcon(Theme::icon(icon)); connect(a, &QAction::triggered, this, fn); return a;
     };
-    tools->addAction(add(file, "&Nuevo", QKeySequence::New, [this] { addDocument(AudioData{}); }, "new"));
+    tools->addAction(add(file, "&Nuevo", QKeySequence::New, [this] {
+        NewAudioDialog dialog(this);
+        if (dialog.exec() != QDialog::Accepted) return;
+        AudioData data; data.rate = dialog.rate(); data.channels = dialog.channels();
+        data.bitDepth = dialog.bitDepth(); data.floatFormat = dialog.floatFormat();
+        addDocument(data);
+    }, "new"));
     tools->addAction(add(file, "&Abrir audio…", QKeySequence::Open, [this] { QString p = QFileDialog::getOpenFileName(this, "Abrir audio", {}, "Audio WAV y MP3 (*.wav *.mp3);;Audio WAV (*.wav);;Audio MP3 (*.mp3);;Todos los archivos (*)", nullptr, QFileDialog::DontUseNativeDialog); if (!p.isEmpty()) openFile(p); }, "open"));
     tools->addAction(add(file, "&Guardar", QKeySequence::Save, [this] { if (current()) save(current()); }, "save"));
     add(file, "Guardar &como…", QKeySequence::SaveAs, [this] { if (current()) save(current(), true); }, "save-as");
@@ -332,6 +370,18 @@ MainWindow::MainWindow(std::function<Recorder *()> source) : playback(new Playba
     deleteAction = add(editing, "&Eliminar selección", QKeySequence::Delete, [this] { edit("delete"); });
     trimAction = add(editing, "&Recortar a selección", QKeySequence("Ctrl+T"), [this] { edit("trim"); });
     selectAllAction = add(editing, "Seleccionar &todo", QKeySequence::SelectAll, [this] { if (auto *d = current()) { d->wave->anchor = 0; d->wave->cursor = d->data.frames(); d->wave->update(); refresh(); } });
+    add(editing, "&Insertar marca", QKeySequence("M"), [this] { addMarker(); });
+    add(editing, "&Eliminar marca", QKeySequence("Shift+M"), [this] { removeMarker(); });
+    editing->addSeparator();
+    // Qué ocurre al soltar una selección sobre otra ventana de audio.
+    auto *dropMenu = editing->addMenu("Al soltar en otra ventana");
+    auto *insertDrop = dropMenu->addAction("Insertar en el punto de destino");
+    insertDrop->setObjectName("dropInsert"); insertDrop->setCheckable(true); insertDrop->setChecked(true);
+    auto *mixDrop = dropMenu->addAction("Mezclar con el audio de destino");
+    mixDrop->setObjectName("dropMix"); mixDrop->setCheckable(true);
+    auto *dropGroup = new QActionGroup(this); dropGroup->addAction(insertDrop); dropGroup->addAction(mixDrop); dropGroup->setExclusive(true);
+    connect(insertDrop, &QAction::triggered, this, [this] { mixOnDrop = false; statusBar()->showMessage("Al soltar otra ventana: insertar en el punto.", 3000); });
+    connect(mixDrop, &QAction::triggered, this, [this] { mixOnDrop = true; statusBar()->showMessage("Al soltar otra ventana: mezclar con el audio de destino.", 3000); });
     tools->addSeparator();
     tools->addAction(add(view, "Acercar", QKeySequence("Ctrl++"), [this] { if (current()) current()->wave->zoomBy(2); }, "zoom-in"));
     tools->addAction(add(view, "Alejar", QKeySequence("Ctrl+-"), [this] { if (current()) current()->wave->zoomBy(0.5); }, "zoom-out"));
@@ -356,7 +406,8 @@ MainWindow::MainWindow(std::function<Recorder *()> source) : playback(new Playba
     add(windows, "Siguiente", QKeySequence::NextChild, [this] { workspace->activateNextSubWindow(); });
     add(windows, "Anterior", QKeySequence::PreviousChild, [this] { workspace->activatePreviousSubWindow(); });
     selectionLabel = new QLabel; formatLabel = new QLabel; statusBar()->addWidget(selectionLabel, 1); statusBar()->addPermanentWidget(formatLabel);
-    add(help, "Acerca de ForgeCraft", {}, [this] { QMessageBox::about(this, "ForgeCraft", "<h2>ForgeCraft 0.1</h2><p>Editor de audio en Qt 6.7 y C++17.</p><p>Inspirado en los editores de audio clásicos. Implementación independiente.</p><p>WAV PCM / float y MP3 mono y estéreo.<br>Exportación WAV PCM de 8/16 bits y MP3 de 128–320 kbps.<br>Edición en memoria; hasta 20 operaciones de deshacer.</p><p>MP3: <a href='https://www.mpg123.de/'>mpg123</a>, copyright 1995–2020 Michael Hipp y otros, LGPL 2.1; <a href='https://lame.sourceforge.io/'>LAME</a>, copyright 1999 Mark Taylor y colaboradores, LGPL 2 o posterior.<br>Licencias y fuentes: carpeta licenses junto al ejecutable.</p>"); });
+    add(options, "&Opciones generales…", QKeySequence("Ctrl+,"), [this] { showOptions(); });
+    add(help, "Acerca de ForgeCraft", {}, [this] { auto *about = new AboutDialog(this); about->show(); about->raise(); });
     connect(workspace, &QMdiArea::subWindowActivated, this, [this] { stop(); refresh(); });
     connect(&timer, &QTimer::timeout, this, &MainWindow::tick); timer.setInterval(35);
     setAcceptDrops(true); workspace->viewport()->setAcceptDrops(true); qApp->installEventFilter(this);
@@ -536,14 +587,40 @@ void MainWindow::addDocument(AudioData data, const QString &path) {
     // En ambos casos el documento de origen no cambia.
     d->copySelectionToDocument = [this, d](qint64 first, qint64 last, const QPoint &global) {
         if (first < 0 || last > d->data.frames() || last <= first) return;
-        AudioData fragment;
-        fragment.rate = d->data.rate; fragment.channels = d->data.channels; fragment.bitDepth = d->data.bitDepth;
-        fragment.samples = d->data.samples.mid(first * d->data.channels, (last - first) * d->data.channels);
+        const AudioData fragment = d->data.fragment(first, last);
         Waveform *dropWave = nullptr;
         Document *target = documentAt(workspace->viewport(), global, dropWave);
         if (target == d) return;   // soltada sobre su propio módulo: no se hace nada
         if (target) {
-            insertFragment(target, dropWave ? dropWave->frameAt(dropWave->mapFromGlobal(global).x()) : -1, fragment);
+            const qint64 dropFrame = dropWave ? dropWave->frameAt(dropWave->mapFromGlobal(global).x()) : -1;
+            if (mixOnDrop) {
+                MixDialog dialog(fragment.frames(), fragment.rate, this);
+                // Escucha de la mezcla: se construye un tramo de la región afectada
+                // con la mezcla aplicada y se reproduce sin tocar el documento.
+                dialog.preview = [this, target, fragment, dropFrame](double sourceGain, double targetGain, qint64 tune, std::function<void()> finished) {
+                    const AudioData &destination = target->data;
+                    const bool empty = destination.frames() == 0;
+                    const int channels = empty ? fragment.channels : destination.channels;
+                    const int rate = empty ? fragment.rate : destination.rate;
+                    AudioData region;
+                    region.rate = rate; region.channels = channels;
+                    region.bitDepth = empty ? fragment.bitDepth : destination.bitDepth;
+                    region.floatFormat = empty ? fragment.floatFormat : destination.floatFormat;
+                    const qint64 at = dropFrame >= 0 ? qBound(qint64(0), dropFrame, destination.frames()) : destination.frames();
+                    const qint64 begin = at + tune;
+                    const qint64 from = qMax(qint64(0), begin - rate);          // 1 s de contexto
+                    qint64 to = qMin(qMax(destination.frames(), begin + fragment.frames() + rate / 2), from + 15 * qint64(rate));
+                    if (to <= from) return false;
+                    region.samples = destination.samples.mid(from * channels, (to - from) * channels);
+                    region.samples.resize((to - from) * channels);
+                    qint64 first = 0, last = 0;
+                    AudioData blended = blendFragment(region, fragment, begin - from, sourceGain, targetGain, 0, first, last);
+                    return playPreview(blended, 0, blended.frames(), finished);
+                };
+                dialog.stopPreview = [this] { stop(); };
+                if (dialog.exec() != QDialog::Accepted) return;
+                insertFragment(target, dropFrame, fragment, true, dialog.sourceGain(), dialog.targetGain(), dialog.tuneFrames());
+            } else insertFragment(target, dropFrame, fragment);
             return;
         }
         const QString name = nextUntitledName();
@@ -556,6 +633,45 @@ void MainWindow::addDocument(AudioData data, const QString &path) {
         }
         refresh();
         statusBar()->showMessage(QString("Selección copiada a «%1» (%2)").arg(fresh->name, timeText(last - first, fragment.rate)), 4000);
+    };
+    // Al arrastrar, la barra de estado muestra la duración del fragmento y la
+    // ventana que hay debajo del puntero.
+    d->wave->dragStatus = [this, d](qint64 first, qint64 last, const QPoint &global) {
+        Waveform *dropWave = nullptr;
+        Document *target = documentAt(workspace->viewport(), global, dropWave);
+        const QString length = timeText(last - first, d->data.rate);
+        if (target && target != d) statusBar()->showMessage(QString("Selección de %1 · soltar en «%2»").arg(length, target->name), 5000);
+        else if (target == d) statusBar()->showMessage(QString("Selección de %1 · suelta en otra ventana o en el área de trabajo").arg(length), 5000);
+        else statusBar()->showMessage(QString("Selección de %1 · documento nuevo al soltar").arg(length), 5000);
+        // Fantasma del fragmento en el documento que hay debajo del puntero.
+        Waveform *previewTarget = (target && target != d) ? target->wave : nullptr;
+        if (previewTarget != dragPreviewWave && dragPreviewWave) { dragPreviewWave->clearDropPreview(); dragPreviewWave = nullptr; }
+        if (previewTarget) {
+            const qint64 at = previewTarget->frameAt(previewTarget->mapFromGlobal(global).x());
+            previewTarget->setDropPreview(d->data.samples.constData(), d->data.channels, first, last, at);
+            dragPreviewWave = previewTarget;
+        }
+    };
+    d->wave->dragFinished = [this] {
+        if (dragPreviewWave) { dragPreviewWave->clearDropPreview(); dragPreviewWave = nullptr; }
+    };
+    d->wave->markerMenu = [this, d](int index, const QPoint &global) {
+        if (index < 0 || index >= d->data.markers.size()) return;
+        if (auto *window = qobject_cast<QMdiSubWindow *>(d->parentWidget())) workspace->setActiveSubWindow(window);
+        QMenu menu(this);
+        QAction *rename = menu.addAction("Renombrar marca…");
+        QAction *remove = menu.addAction("Eliminar marca");
+        QAction *chosen = menu.exec(global);
+        if (chosen == rename) { if (d->wave->markerRename) d->wave->markerRename(index); }
+        else if (chosen == remove) removeMarkerAt(d, index);
+    };
+    d->wave->markerRename = [this, d](int index) {
+        if (index < 0 || index >= d->data.markers.size()) return;
+        bool accepted = false;
+        const QString name = QInputDialog::getText(this, "Renombrar marca", "Nombre de la marca:", QLineEdit::Normal, d->data.markers[index].name, &accepted);
+        if (!accepted || name.trimmed().isEmpty()) return;
+        d->data.markers[index].name = name.trimmed();
+        d->wave->update();
     };
     window->show(); workspace->setActiveSubWindow(window); refresh();
 }
@@ -584,23 +700,102 @@ void MainWindow::refresh() {
     d->selectionEnd->setText(timeText(d->wave->last(), d->data.rate)); d->selectionLength->setText(timeText(d->wave->last() - d->wave->first(), d->data.rate));
     { QSignalBlocker block(d->scroll); qint64 available = qMax(qint64(0), d->data.frames() - d->wave->visibleFrames()); d->scroll->setRange(0, available ? 100000 : 0); d->scroll->setPageStep(int(100000.0 / qMax(1.0, d->wave->zoom))); d->scroll->setValue(available ? int(double(d->wave->start) / available * 100000) : 0); }
     selectionLabel->setText(QString("Selección: %1 → %2   |   Duración: %3").arg(timeText(d->wave->first(), d->data.rate), timeText(d->wave->last(), d->data.rate), timeText(d->wave->last() - d->wave->first(), d->data.rate)));
-    formatLabel->setText(QString("%1 Hz  |  %2 bit  |  %3  |  %4").arg(d->data.rate).arg(d->data.bitDepth).arg(d->data.channels == 2 ? "Estéreo" : "Mono").arg(timeText(d->data.frames(), d->data.rate)));
+    const QString depth = d->data.floatFormat ? "32 float" : QString::number(d->data.bitDepth) + " bit";
+    formatLabel->setText(QString("%1 Hz  |  %2  |  %3  |  %4").arg(d->data.rate).arg(depth).arg(d->data.channels == 2 ? "Estéreo" : "Mono").arg(timeText(d->data.frames(), d->data.rate)));
     setWindowTitle(d->name + (d->undo.isClean() ? "" : " *") + " — ForgeCraft");
 }
 void MainWindow::commit(Document *d, const AudioData &after, const QString &name, qint64 a, qint64 b) { stop(); d->undo.push(new AudioEdit(d, after, name, a, b)); refresh(); }
 
-// Inserta un fragmento en otro documento, en la posición indicada (-1: inicio de
-// la selección del destino). Es una operación deshacible del documento destino.
-void MainWindow::insertFragment(Document *target, qint64 position, const AudioData &fragment) {
+// Coloca un fragmento en otro documento, en la posición indicada (-1: inicio de
+// la selección del destino). Con `mix` se suma al audio existente en lugar de
+// insertarse, como el modo de mezcla de Sound Forge; en ambos casos es una
+// operación deshacible del documento destino.
+void MainWindow::showOptions() {
+    QVector<QPair<quint32, QString>> devices;
+#ifdef Q_OS_WIN
+    const UINT count = waveOutGetNumDevs();
+    for (UINT index = 0; index < count; ++index) {
+        WAVEOUTCAPSW caps{};
+        if (waveOutGetDevCapsW(index, &caps, sizeof(caps)) == MMSYSERR_NOERROR)
+            devices.append({quint32(index), QString::fromWCharArray(caps.szPname)});
+    }
+#endif
+    OptionsDialog dialog(devices, outputDevice, this);
+    dialog.testDevice = [this](quint32 device) { return playTestTone(device); };
+    if (dialog.exec() != QDialog::Accepted) return;
+    outputDevice = dialog.outputDevice();
+    QSettings().setValue("audio/outputDevice", outputDevice);
+    statusBar()->showMessage("Dispositivo de salida guardado.", 3000);
+}
+bool MainWindow::playTestTone(quint32 device) {
+    stop();
+    const quint32 previous = outputDevice;
+    outputDevice = device;
+    const AudioData tone = AudioData::tone(0.6, 440.0, 44100, 1);
+    const bool started = playPreview(tone, 0, tone.frames(), [] {});
+    outputDevice = previous;
+    return started;
+}
+void MainWindow::addMarker() {
+    auto *d = current(); if (!d) return;
+    const qint64 frame = qBound(qint64(0), d->wave->cursor, d->data.frames());
+    auto taken = [d](const QString &name) {
+        for (const auto &marker : d->data.markers) if (marker.name == name) return true;
+        return false;
+    };
+    int number = d->data.markers.size() + 1;
+    QString name = QString("Marca %1").arg(number, 2, 10, QChar('0'));
+    while (taken(name)) name = QString("Marca %1").arg(++number, 2, 10, QChar('0'));
+    AudioData next = d->data;
+    next.markers.append({frame, name});
+    commit(d, next, "Insertar marca", frame, frame);
+    d->wave->selectedMarker = next.markers.size() - 1;
+    d->wave->update();
+    statusBar()->showMessage(QString("%1 en %2").arg(name, timeText(frame, d->data.rate)), 4000);
+}
+void MainWindow::removeMarker() {
+    auto *d = current(); if (!d || d->data.markers.isEmpty()) return;
+    int best = -1; qint64 distance = 0;
+    for (int index = 0; index < d->data.markers.size(); ++index) {
+        const qint64 currentDistance = qAbs(d->data.markers[index].frame - d->wave->cursor);
+        if (best < 0 || currentDistance < distance) { best = index; distance = currentDistance; }
+    }
+    removeMarkerAt(d, best);
+}
+void MainWindow::removeMarkerAt(Document *document, int index) {
+    if (!document || index < 0 || index >= document->data.markers.size()) return;
+    const QString name = document->data.markers[index].name;
+    const qint64 frame = document->data.markers[index].frame;
+    AudioData next = document->data;
+    next.markers.remove(index);
+    document->wave->selectedMarker = -1;
+    commit(document, next, "Eliminar marca", frame, frame);
+    document->wave->update();
+    statusBar()->showMessage(QString("Marca «%1» eliminada").arg(name), 4000);
+}
+void MainWindow::insertFragment(Document *target, qint64 position, const AudioData &fragment, bool mix, double sourceGain, double targetGain, qint64 tune) {
     if (!target || fragment.samples.isEmpty()) return;
     AudioData next = target->data;
     if (next.frames() && (next.rate != fragment.rate || next.channels != fragment.channels)) {
-        QMessageBox::information(this, "Insertar selección", "El documento de destino usa otra frecuencia o número de canales. Ajusta su formato con Resample o Channel Converter antes de insertar.");
+        QMessageBox::information(this, mix ? "Mezclar selección" : "Insertar selección", "El documento de destino usa otra frecuencia o número de canales. Ajusta su formato con Resample o Channel Converter antes de soltar el audio.");
         return;
     }
-    if (!next.frames()) { next.rate = fragment.rate; next.channels = fragment.channels; next.bitDepth = fragment.bitDepth; }
+    if (!next.frames()) { next.rate = fragment.rate; next.channels = fragment.channels; next.bitDepth = fragment.bitDepth; next.floatFormat = fragment.floatFormat; }
     const qint64 at = position >= 0 ? qBound(qint64(0), position, next.frames()) : target->wave->first();
+    if (mix) {
+        qint64 first = 0, last = 0;
+        AudioData blended = blendFragment(next, fragment, at, sourceGain, targetGain, tune, first, last);
+        if (last <= first) return;
+        stop();
+        commit(target, blended, "Mezclar selección", first, last);
+        if (auto *window = qobject_cast<QMdiSubWindow *>(target->parentWidget())) workspace->setActiveSubWindow(window);
+        refresh();
+        statusBar()->showMessage(QString("Selección mezclada en «%1» (%2)").arg(target->name, timeText(fragment.frames(), fragment.rate)), 4000);
+        return;
+    }
+    next.shiftMarkers(at, fragment.frames());
     next.samples = next.samples.first(at * next.channels) + fragment.samples + next.samples.mid(at * next.channels);
+    for (const auto &marker : fragment.markers) next.markers.append({at + marker.frame, marker.name});
     stop();
     commit(target, next, "Insertar selección", at, at + fragment.frames());
     if (auto *window = qobject_cast<QMdiSubWindow *>(target->parentWidget())) workspace->setActiveSubWindow(window);
@@ -609,7 +804,7 @@ void MainWindow::insertFragment(Document *target, qint64 position, const AudioDa
 }
 void MainWindow::copy() {
     auto *d = current(); if (!d || d->wave->first() == d->wave->last()) return;
-    clipboard = d->data; clipboard.samples = d->data.samples.mid(d->wave->first() * d->data.channels, (d->wave->last() - d->wave->first()) * d->data.channels);
+    clipboard = d->data.fragment(d->wave->first(), d->wave->last());
 }
 void MainWindow::paste() {
     auto *d = current(); if (!d || clipboard.samples.isEmpty()) return;
@@ -617,6 +812,8 @@ void MainWindow::paste() {
     AudioData next = d->data; if (!next.frames()) { next.rate = clipboard.rate; next.channels = clipboard.channels; }
     qint64 a = d->wave->first(), b = d->wave->last();
     next.samples = next.samples.first(a * next.channels) + clipboard.samples + next.samples.mid(b * next.channels);
+    next.shiftMarkers(a, clipboard.frames());
+    for (const auto &marker : clipboard.markers) next.markers.append({a + marker.frame, marker.name});
     commit(d, next, "Pegar", a, a + clipboard.frames());
 }
 void MainWindow::edit(const QString &op, double gain) {
@@ -625,14 +822,18 @@ void MainWindow::edit(const QString &op, double gain) {
     if (!selected && (op == "delete" || op == "trim")) return;
     if (!selected) { a = 0; b = d->data.frames(); }
     AudioData next = d->data;
-    if (op == "delete") { next.samples.remove(a * next.channels, (b - a) * next.channels); b = a; }
-    else if (op == "trim") { next.samples = next.samples.mid(a * next.channels, (b - a) * next.channels); b -= a; a = 0; }
+    if (op == "delete") { next.samples.remove(a * next.channels, (b - a) * next.channels); next.removeMarkers(a, b); b = a; }
+    else if (op == "trim") { next.samples = next.samples.mid(a * next.channels, (b - a) * next.channels); next.trimMarkers(a, b); b -= a; a = 0; }
     else next.process(a, b, op, gain);
     commit(d, next, op, a, b);
 }
 bool MainWindow::save(Document *d, bool saveAs) {
     QString path = d->path;
-    QString wavFilter = d->data.bitDepth == 8 ? "Audio WAV PCM de 8 bits (*.wav)" : "Audio WAV PCM de 16 bits (*.wav)";
+    QString wavFilter = d->data.floatFormat ? "Audio WAV float de 32 bits (*.wav)"
+                       : d->data.bitDepth == 8 ? "Audio WAV PCM de 8 bits (*.wav)"
+                       : d->data.bitDepth == 24 ? "Audio WAV PCM de 24 bits (*.wav)"
+                       : d->data.bitDepth == 32 ? "Audio WAV PCM de 32 bits (*.wav)"
+                       : "Audio WAV PCM de 16 bits (*.wav)";
     QString filter = path.endsWith(".mp3", Qt::CaseInsensitive) ? "Audio MP3 (*.mp3)" : wavFilter;
     if (path.isEmpty() || saveAs) {
         QFileDialog dialog(this, "Guardar audio");
@@ -695,7 +896,7 @@ void MainWindow::play(bool loop) {
         qToLittleEndian(quint16(qint16(std::lround(d->data.samples[i] * 32767))), playback->bytes.data() + (i - a * d->data.channels) * 2);
     WAVEFORMATEX format{}; format.wFormatTag = WAVE_FORMAT_PCM; format.nChannels = WORD(d->data.channels); format.nSamplesPerSec = DWORD(d->data.rate);
     format.wBitsPerSample = 16; format.nBlockAlign = WORD(d->data.channels * 2); format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
-    MMRESULT result = waveOutOpen(&playback->handle, WAVE_MAPPER, &format, 0, 0, CALLBACK_NULL);
+    MMRESULT result = waveOutOpen(&playback->handle, UINT(outputDevice), &format, 0, 0, CALLBACK_NULL);
     if (result != MMSYSERR_NOERROR) { playback->handle = nullptr; QMessageBox::warning(this, "Reproducción", "No se pudo abrir el dispositivo de audio (código " + QString::number(result) + ")."); return; }
     playback->header = {}; playback->header.lpData = playback->bytes.data(); playback->header.dwBufferLength = DWORD(playback->bytes.size());
     result = waveOutPrepareHeader(playback->handle, &playback->header, sizeof(WAVEHDR));
@@ -719,7 +920,7 @@ bool MainWindow::playPreview(const AudioData &audio, qint64 first, qint64 last, 
         qToLittleEndian(quint16(qint16(std::lround(audio.samples[i] * 32767))), playback->bytes.data() + (i - first * audio.channels) * 2);
     WAVEFORMATEX format{}; format.wFormatTag = WAVE_FORMAT_PCM; format.nChannels = WORD(audio.channels); format.nSamplesPerSec = DWORD(audio.rate);
     format.wBitsPerSample = 16; format.nBlockAlign = WORD(audio.channels * 2); format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
-    MMRESULT result = waveOutOpen(&playback->handle, WAVE_MAPPER, &format, 0, 0, CALLBACK_NULL);
+    MMRESULT result = waveOutOpen(&playback->handle, UINT(outputDevice), &format, 0, 0, CALLBACK_NULL);
     if (result != MMSYSERR_NOERROR) { playback->handle = nullptr; QMessageBox::warning(this, "Previsualización", "No se pudo abrir el dispositivo de audio (código " + QString::number(result) + ")."); return false; }
     playback->header = {}; playback->header.lpData = playback->bytes.data(); playback->header.dwBufferLength = DWORD(playback->bytes.size());
     result = waveOutPrepareHeader(playback->handle, &playback->header, sizeof(WAVEHDR));

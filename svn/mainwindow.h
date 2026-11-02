@@ -143,7 +143,16 @@ private:
     void commit(Document *d, const AudioData &after, const QString &name, qint64 first, qint64 last);
     bool save(Document *d, bool saveAs = false);
     bool confirmClose(Document *d);
-    void insertFragment(Document *target, qint64 position, const AudioData &fragment);
+    void insertFragment(Document *target, qint64 position, const AudioData &fragment, bool mix = false, double sourceGain = 1.0, double targetGain = 1.0, qint64 tune = 0);
+    void showOptions();
+    bool playTestTone(quint32 device);
+    quint32 outputDevice = 0xffffffffu;   // WAVE_MAPPER hasta que se elija otro
+    void addMarker();
+    void removeMarker();
+    void removeMarkerAt(Document *document, int index);
+    // true: al soltar sobre otra ventana se mezcla; false: se inserta.
+    bool mixOnDrop = false;
+    Waveform *dragPreviewWave = nullptr;   // ventana que muestra el fantasma del arrastre
     void play(bool loop = false);
     // Vista previa de un proceso: reproduce un audio sin documento asociado.
     // Devuelve si la reproducción llegó a empezar.

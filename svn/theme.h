@@ -39,6 +39,10 @@ inline const QColor MenuBarSelected(0x39, 0x38, 0x5b);
 inline const QColor Playhead(0xd9, 0x6b, 0x6b);
 inline const QColor RecordDot(0xc0, 0x39, 0x2b);
 inline const QColor SelectionBand(0x2c, 0x36, 0x48);
+// Fantasma del fragmento que se arrastra: ámbar, para que destaque sobre la onda azul.
+inline const QColor DragGhost(0xe5, 0xc0, 0x7b);
+// Marcas de posición: rojo, para distinguirlas del cursor y del acento.
+inline const QColor Marker(0xcf, 0x4f, 0x4f);
 
 // Métricas de la forma de onda (antes literales dispersos en paintEvent).
 inline constexpr int RulerHeight = 27;   // franja superior de la regla de tiempo
