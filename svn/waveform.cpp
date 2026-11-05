@@ -23,13 +23,26 @@ int Waveform::xAt(qint64 frame) const { return Theme::GutterWidth + int(double(f
 void Waveform::ensurePeaks() {
     const float *data = audio->samples.constData();
     if (cacheData == data && cacheSize == audio->samples.size() && cacheChannels == audio->channels) return;
-    cacheData = data; cacheSize = audio->samples.size(); cacheChannels = audio->channels;
-    qint64 blocks = (audio->frames() + 127) / 128;
-    minima.fill(0, blocks * cacheChannels); maxima.fill(0, blocks * cacheChannels);
-    float *lo = minima.data(), *hi = maxima.data();
-    for (qint64 f = 0; f < audio->frames(); ++f) for (int c = 0; c < cacheChannels; ++c) {
-        qint64 index = (f / 128) * cacheChannels + c; float value = data[f * cacheChannels + c]; lo[index] = qMin(lo[index], value); hi[index] = qMax(hi[index], value);
+    setPreparedPeaks(preparePeaks(*audio));
+}
+Waveform::PeakData Waveform::preparePeaks(const AudioData &audio, const AudioData::ReadProgress &progress) {
+    PeakData result;
+    qint64 blocks = (audio.frames() + 127) / 128;
+    result.minima.fill(0, blocks * audio.channels); result.maxima.fill(0, blocks * audio.channels);
+    float *lo = result.minima.data(), *hi = result.maxima.data(); const float *data = audio.samples.constData();
+    for (qint64 f = 0; f < audio.frames(); ++f) {
+        if ((f & 16383) == 0 && progress && !progress(int(f * 99 / qMax(qint64(1), audio.frames())))) { result.canceled = true; return result; }
+        for (int c = 0; c < audio.channels; ++c) {
+            qint64 index = (f / 128) * audio.channels + c; float value = data[f * audio.channels + c]; lo[index] = qMin(lo[index], value); hi[index] = qMax(hi[index], value);
+        }
     }
+    if (progress && !progress(100)) result.canceled = true;
+    return result;
+}
+void Waveform::setPreparedPeaks(PeakData prepared) {
+    if (!audio || prepared.canceled || prepared.minima.size() != ((audio->frames() + 127) / 128) * audio->channels || prepared.maxima.size() != prepared.minima.size()) { invalidateCache(); return; }
+    minima = std::move(prepared.minima); maxima = std::move(prepared.maxima);
+    cacheData = audio->samples.constData(); cacheSize = audio->samples.size(); cacheChannels = audio->channels;
 }
 void Waveform::peaks(qint64 first, qint64 last, int channel, float &low, float &high) const {
     while (first < last && first % 128) { float value = cacheData[first * cacheChannels + channel]; low = qMin(low, value); high = qMax(high, value); ++first; }
@@ -37,6 +50,15 @@ void Waveform::peaks(qint64 first, qint64 last, int channel, float &low, float &
     while (first < last) { float value = cacheData[first * cacheChannels + channel]; low = qMin(low, value); high = qMax(high, value); ++first; }
 }
 void Waveform::resetView() { zoom = 1; start = 0; anchor = cursor = 0; update(); emit selectionChanged(); }
+void Waveform::setPlayhead(qint64 frame) {
+    playhead = frame;
+    if (followPlayback && audio && frame >= 0) {
+        const qint64 visible = visibleFrames();
+        if (frame < start || frame >= start + visible)
+            start = std::clamp(frame, qint64(0), qMax(qint64(0), audio->frames() - visible));
+    }
+    update();
+}
 void Waveform::zoomBy(double factor) {
     if (!audio) return;
     zoom = std::clamp(zoom * factor, 1.0, qMax(1.0, audio->frames() / 16.0));
@@ -141,6 +163,14 @@ void Waveform::paintEvent(QPaintEvent *) {
     if (!empty) { p.setPen(Theme::Text); p.drawLine(xAt(cursor), ruler, xAt(cursor), bottom); }
     if (playhead >= 0) { p.setPen(Theme::Playhead); p.drawLine(xAt(playhead), ruler, xAt(playhead), bottom); }
     p.restore();
+    // En inserción solo se señala el punto de destino, sin fantasma ni banda.
+    if (previewAt >= 0 && !previewSamples) {
+        const int x = xAt(previewAt);
+        if (x >= left && x <= right) {
+            p.setPen(QPen(Theme::DragGhost, 2));
+            p.drawLine(x, 1, x, bottom);
+        }
+    }
 }
 // El puntero avisa cuando está sobre un extremo de la selección: se puede
 // arrastrar para ampliarla o reducirla.
@@ -154,13 +184,13 @@ void Waveform::updateSelectionCursor(const QPoint &pos) {
     if (shape == Qt::ArrowCursor) QWidget::unsetCursor(); else QWidget::setCursor(shape);
 }
 
-void Waveform::setDropPreview(const float *samples, int channels, qint64 first, qint64 last, qint64 at) {
-    previewSamples = samples; previewChannels = channels;
+void Waveform::setDropPreview(const float *samples, int channels, qint64 first, qint64 last, qint64 at, bool mix) {
+    previewSamples = mix ? samples : nullptr; previewChannels = channels;
     previewFirst = first; previewLast = last; previewAt = at;
     update();
 }
 void Waveform::clearDropPreview() {
-    if (!previewSamples) return;
+    if (previewAt < 0 && !previewSamples) return;
     previewSamples = nullptr; previewChannels = 0; previewAt = -1;
     update();
 }
@@ -182,6 +212,12 @@ void Waveform::updateHover(const QPoint &pos) {
     updateSelectionCursor(pos);
 }
 void Waveform::mousePressEvent(QMouseEvent *e) {
+    if (draggingOut && e->button() == Qt::RightButton && (e->buttons() & Qt::LeftButton)) {
+        e->accept();
+        if (dragToggleMode) dragToggleMode();
+        if (dragStatus) dragStatus(first(), last(), e->globalPosition().toPoint());
+        return;
+    }
     if (e->button() != Qt::LeftButton) return;
     const int markerIndex = markerAt(e->position().toPoint());
     if (markerIndex >= 0) {
@@ -242,6 +278,7 @@ void Waveform::mouseMoveEvent(QMouseEvent *e) {
 }
 
 void Waveform::mouseReleaseEvent(QMouseEvent *e) {
+    if (draggingOut && e->button() == Qt::RightButton) { e->accept(); return; }
     if (e->button() != Qt::LeftButton) { QWidget::mouseReleaseEvent(e); return; }
     if (adjustingEdge) {
         adjustingEdge = 0;
@@ -272,6 +309,9 @@ void Waveform::mouseReleaseEvent(QMouseEvent *e) {
 }
 
 void Waveform::mouseDoubleClickEvent(QMouseEvent *e) {
+    // Windows convierte dos clics rápidos en un doble clic: también alterna.
+    if (draggingOut && e->button() == Qt::RightButton) { mousePressEvent(e); return; }
+    if (e->button() != Qt::LeftButton) return;
     const int markerIndex = markerAt(e->position().toPoint());
     if (markerIndex >= 0) { if (markerRename) markerRename(markerIndex); return; }
     if (!audio) return;

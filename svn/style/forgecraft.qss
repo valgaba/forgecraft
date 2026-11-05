@@ -431,13 +431,6 @@ QLabel#timeField {
     padding: 1px 6px;
 }
 
-QDockWidget#levelsDock { background-color: #181e2c; }
-
-#recordDialog QLabel { color: #8a8d96; }
-#recordDialog QLabel#recordTime { color: #80a4ae; font-family: "Consolas", "Courier New", monospace; }
-#recordDialog QLabel#recordState { color: #80a4ae; font-weight: bold; }
-#recordDialog QPushButton#recordStart { color: #e29292; }
-#recordDialog QPushButton#recordStart:hover { border-color: #e29292; }
 
 #processDialog QDoubleSpinBox, #processDialog QComboBox { min-width: 140px; }
 
@@ -587,4 +580,10 @@ QDialog#optionsDialog QGroupBox#optionsGroup::title {
     left: 8px;
     padding: 0 4px;
     color: #80a4ae;
+}
+
+/* == 18. Vúmetro del módulo ============================================== */
+QFrame#VuMeter {
+    background-color: #20242e;
+    border: 1px solid #333b4f;
 }

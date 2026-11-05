@@ -15,6 +15,7 @@
         <file alias="icons/zoom-in.svg">icons/zoom-in.svg</file>
         <file alias="icons/zoom-out.svg">icons/zoom-out.svg</file>
         <file alias="icons/play.svg">icons/Playmini.svg</file>
+        <file>icons/follow-playhead.svg</file>
         <file alias="icons/pause.svg">icons/Pause.svg</file>
         <file alias="icons/stop.svg">icons/Stop.svg</file>
         <file alias="icons/start.svg">icons/rewind.svg</file>

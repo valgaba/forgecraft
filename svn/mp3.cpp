@@ -67,11 +67,14 @@ struct Encoder {
 #undef LOAD_API
 }
 
-bool Mp3::read(const QString &path, AudioData &out, QString &error) {
+bool Mp3::read(const QString &path, AudioData &out, QString &error, const AudioData::ReadProgress &progress) {
     error.clear();
+    auto report = [&](int percent) { if (progress && !progress(percent)) { error = "Carga cancelada."; return false; } return true; };
+    if (!report(0)) return false;
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) { error = file.errorString(); return false; }
     if (file.size() > 512 * 1024 * 1024) { error = "El límite de apertura es 512 MB por archivo."; return false; }
+    const qint64 fileSize = file.size();
     Decoder api; if (!api.load(error)) return false;
     if (api.mpg123_init() != MPG123_OK) { error = "No se pudo iniciar el decodificador MP3."; return false; }
     auto shutdown = qScopeGuard([&] { api.mpg123_exit(); });
@@ -86,6 +89,7 @@ bool Mp3::read(const QString &path, AudioData &out, QString &error) {
     AudioData result; bool haveFormat = false, eof = false;
     float decoded[16384];
     for (;;) {
+        if (!report(int(qMin(qint64(99), file.pos() * 99 / qMax(qint64(1), fileSize))))) return false;
         size_t done = 0;
         int status = api.mpg123_read(handle, decoded, sizeof(decoded), &done);
         if (status == MPG123_NEW_FORMAT) {
@@ -104,7 +108,8 @@ bool Mp3::read(const QString &path, AudioData &out, QString &error) {
             }
             qsizetype oldSize = result.samples.size(), count = qsizetype(done / sizeof(float));
             result.samples.resize(oldSize + count);
-            for (qsizetype i = 0; i < count; ++i) result.samples[oldSize + i] = std::isfinite(decoded[i]) ? std::clamp(decoded[i], -1.0f, 1.0f) : 0;
+            float *destination = result.samples.data() + oldSize;
+            for (qsizetype i = 0; i < count; ++i) destination[i] = std::isfinite(decoded[i]) ? std::clamp(decoded[i], -1.0f, 1.0f) : 0;
         }
         if (status == MPG123_DONE) break;
         if (status == MPG123_NEED_MORE) {
@@ -121,6 +126,7 @@ bool Mp3::read(const QString &path, AudioData &out, QString &error) {
         }
     }
     if (!haveFormat || result.samples.isEmpty()) { error = "El archivo no contiene audio MP3 válido."; return false; }
+    if (!report(100)) return false;
     out = std::move(result); return true;
 }
 

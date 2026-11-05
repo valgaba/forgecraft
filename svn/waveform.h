@@ -7,14 +7,21 @@ class Waveform : public QWidget {
     Q_OBJECT
 public:
     explicit Waveform(QWidget *parent = nullptr);
+    struct PeakData { QVector<float> minima, maxima; bool canceled = false; };
+    static PeakData preparePeaks(const AudioData &audio, const AudioData::ReadProgress &progress = {});
+    void setPreparedPeaks(PeakData data);
     AudioData *audio = nullptr;
     qint64 anchor = 0, cursor = 0, playhead = -1;
+    bool followPlayback = true;
+    void setPlayhead(qint64 frame);
     qint64 start = 0;
     double zoom = 1;
     // Copiar la selección arrastrándola fuera de la forma de onda.
     std::function<void(qint64 first, qint64 last, const QPoint &global)> dragOut;
     // Aviso mientras se arrastra: duración y ventana de destino bajo el puntero.
     std::function<void(qint64 first, qint64 last, const QPoint &global)> dragStatus;
+    std::function<void()> dragToggleMode;
+    bool selectionDragActive() const { return draggingOut; }
     // Doble clic sobre el banderín de una marca para renombrarla.
     std::function<void(int index)> markerRename;
     // Menú contextual (botón derecho) sobre el banderín de una marca.
@@ -23,7 +30,7 @@ public:
     // Marca cuyo banderín está en esa posición (regla), o -1.
     int markerAt(const QPoint &pos) const;
     // Fantasma del fragmento que se está arrastrando, dibujado en el destino.
-    void setDropPreview(const float *samples, int channels, qint64 first, qint64 last, qint64 at);
+    void setDropPreview(const float *samples, int channels, qint64 first, qint64 last, qint64 at, bool mix);
     void clearDropPreview();
     std::function<void()> dragFinished;
     qint64 first() const { return qMin(anchor, cursor); }

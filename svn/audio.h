@@ -1,6 +1,7 @@
 #pragma once
 #include <QVector>
 #include <QString>
+#include <functional>
 
 // Marca de posición dentro de un documento: se dibuja en la regla y viaja con
 // el audio cuando se copia o se arrastra un fragmento.
@@ -18,7 +19,9 @@ struct AudioData {
     QVector<Marker> markers;
     qint64 frames() const { return samples.size() / channels; }
     double duration() const { return double(frames()) / rate; }
-    static bool read(const QString &path, AudioData &out, QString &error);
+    // Porcentaje 0..100; devolver false cancela sin modificar out.
+    using ReadProgress = std::function<bool(int)>;
+    static bool read(const QString &path, AudioData &out, QString &error, const ReadProgress &progress = {});
     bool write(const QString &path, QString &error, int mp3Bitrate = 192) const;
     static AudioData tone(double seconds, double frequency, int rate = 44100, int channels = 2);
     void process(qint64 first, qint64 last, const QString &operation, double gain = 1.0);

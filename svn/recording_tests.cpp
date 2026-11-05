@@ -1,5 +1,4 @@
 #include "recorder.h"
-#include "recorddialog.h"
 #include "mainwindow.h"
 #include <QApplication>
 #include <QAction>
@@ -9,6 +8,8 @@
 #include <QMessageBox>
 #include <QElapsedTimer>
 #include <QTemporaryDir>
+#include <QToolButton>
+#include <QEventLoop>
 #include <QtEndian>
 #include <cmath>
 #include <cstdio>
@@ -72,61 +73,64 @@ int recordingTests() {
     return failures;
 }
 
-int recordingUiTests() {
+int recordingScopeTests() {
     int failures = 0; DeviceCounters counters;
-    auto check = [&](bool ok, const char *message) { std::printf("%s recording UI %s\n", ok ? "PASS" : "FAIL", message); std::fflush(stdout); if (!ok) ++failures; };
-    MainWindow window([&] { return new SyntheticRecorder(&counters); }); window.show();
-    auto *workspace = window.findChild<QMdiArea *>(); QAction *recordAction = nullptr;
-    for (auto *action : window.findChildren<QAction *>()) if (action->objectName() == "recordAudio") recordAction = action;
-    if (!recordAction) { check(false, "record action exists"); return failures; }
-    auto document = [&] { return static_cast<Document *>(workspace->currentSubWindow()->widget()); };
-    auto undo = [&](bool redo) { auto *doc = document(); if (redo) doc->undo.redo(); else doc->undo.undo(); };
-    QTimer script; script.setInterval(10); QElapsedTimer elapsed;
-    int step = 0, wait = 0; qint64 pausedFrames = 0, firstTake = 0;
-    bool monitorOk = false, pauseOk = false, deliveredOk = false, appendedOk = false, formatLocked = false, timeout = false;
-    QObject::connect(&script, &QTimer::timeout, &window, [&] {
-        auto *dialog = qobject_cast<RecordDialog *>(QApplication::activeModalWidget()); if (!dialog) return;
-        auto click = [&](const char *name) { if (auto *button = dialog->findChild<QPushButton *>(name)) button->click(); };
-        if (elapsed.elapsed() > 5000) { timeout = true; click("recordStop"); dialog->reject(); return; }
-        if (step == 0) {
-            // La monitorización es automática: al abrir, la entrada ya se escucha sin grabar.
-            if (auto *label = dialog->findChild<QLabel *>("recordState")) monitorOk = label->text() == "Escuchando la entrada" && dialog->take().frames() == 0;
-            // Con audio en el documento, el formato de grabación queda fijado al suyo.
-            if (auto *rate = dialog->findChild<QComboBox *>("recordRate")) if (document()->data.frames()) formatLocked = !rate->isEnabled();
-            click("recordStart"); ++step; return;
-        }
-        if (step == 1 && dialog->take().frames() >= 1323) { dialog->grab().save(QApplication::applicationDirPath() + "/../build/recording-dialog.png"); click("recordPause"); pausedFrames = dialog->take().frames(); ++step; return; }
-        if (step == 2 && ++wait > 5) { pauseOk = dialog->take().frames() == pausedFrames; click("recordPause"); ++step; return; }
-        if (step == 3 && dialog->take().frames() >= pausedFrames + 882) {
-            const qint64 before = document()->data.frames(), takeFrames = dialog->take().frames();
-            click("recordStop");
-            deliveredOk = document()->data.frames() == before + takeFrames && dialog->take().frames() == 0;
-            firstTake = document()->data.frames();
-            ++step; return;
-        }
-        if (step == 4) { click("recordStart"); ++step; return; }
-        if (step == 5 && dialog->take().frames() >= 882) {
-            const qint64 before = document()->data.frames(), takeFrames = dialog->take().frames();
-            click("recordStop");
-            appendedOk = document()->data.frames() == before + takeFrames;
-            click("recordClose");
-        }
-    });
-    auto run = [&] { step = wait = 0; elapsed.restart(); script.start(); recordAction->trigger(); script.stop(); };
-    run();
-    auto *doc = document();
-    check(!timeout && monitorOk && pauseOk, "automatic monitoring, pause and resume");
-    check(deliveredOk && firstTake > 0, "stop delivers the take to the focused document");
-    check(appendedOk, "a second take is appended at the end");
-    check(doc->undo.count() == 2 && !doc->undo.isClean() && workspace->subWindowList().size() == 1, "each take is an undo step");
-    undo(false); check(doc->data.frames() == firstTake, "undo removes the second take");
-    undo(false); check(doc->data.frames() == 0, "undo removes the first take");
-    undo(true); check(doc->data.frames() == firstTake, "redo restores the take");
-    const auto original = doc->data;
-    run();
-    check(!timeout && formatLocked, "recording format is locked to the document format");
-    check(doc->data.frames() > original.frames() && doc->data.samples.first(original.samples.size()) == original.samples, "appending keeps the existing audio untouched");
-    check(counters.starts == counters.stops && counters.destroyed == 2, "every input stream closed after dialog exit");
+    auto check = [&](bool ok, const char *message) { std::printf("%s recording MDI %s\n", ok ? "PASS" : "FAIL", message); std::fflush(stdout); if (!ok) ++failures; };
+    auto source = std::make_unique<SyntheticRecorder>(&counters);
+    MainWindow window([&] { return source.get(); }); window.show();
+    window.addDocument(AudioData{});
+    auto wait = [] { QEventLoop loop; QTimer::singleShot(60, &loop, &QEventLoop::quit); loop.exec(); };
+    auto *workspace = window.findChild<QMdiArea *>();
+    auto *firstWindow = workspace->currentSubWindow();
+    auto *first = static_cast<Document *>(firstWindow->widget());
+    QTemporaryDir temp(QApplication::applicationDirPath() + "/../build/record-scope-XXXXXX");
+    QString error; const auto tone = AudioData::tone(.1, 440);
+    if (!temp.isValid() || !tone.write(temp.filePath("second.wav"), error)) { check(false, "fixture creation"); return failures; }
+    window.openFile(temp.filePath("second.wav"), true);
+    auto *secondWindow = workspace->currentSubWindow();
+    auto *second = static_cast<Document *>(secondWindow->widget());
+    const auto secondOriginal = second->data.samples;
+    auto clickStop = [](Document *document) {
+        for (auto *button : document->findChildren<QToolButton *>()) if (button->toolTip() == "Detener") { button->click(); return true; }
+        return false;
+    };
+    first->record(); wait();
+    check(source->active() && source->buffer.audio.frames() > 0, "capture starts in first window");
+    workspace->setActiveSubWindow(secondWindow);
+    const qint64 beforeForeignStop = source->buffer.audio.frames();
+    check(clickStop(second), "second window Stop button exists");
+    check(source->active() && first->data.frames() == 0 && second->data.samples == secondOriginal, "Stop in another window leaves recording and both documents untouched");
+    wait();
+    check(source->active() && source->buffer.audio.frames() > beforeForeignStop, "capture keeps accumulating after foreign Stop");
+    const qint64 firstTake = source->buffer.audio.frames();
+    // Focus remains in the second window: the owning button must still stop first.
+    clickStop(first);
+    check(!source->active() && first->data.frames() == firstTake && firstTake > 0 && second->data.samples == secondOriginal, "own Stop commits the take to its owner regardless of focus");
+    first->undo.undo(); check(first->data.frames() == 0, "stopped take can be undone"); first->undo.redo();
+    second->record(); wait(); workspace->setActiveSubWindow(firstWindow);
+    const qint64 secondTakeBefore = source->buffer.audio.frames(); clickStop(first); wait();
+    check(source->active() && source->buffer.audio.frames() > secondTakeBefore && second->data.samples == secondOriginal, "isolation also works when second window owns capture");
+    const qint64 secondTake = source->buffer.audio.frames(); clickStop(second);
+    check(!source->active() && second->data.frames() == tone.frames() + secondTake, "second window Stop appends its own take");
+    const qint64 existing = first->data.frames(); first->record(); wait();
+    const qint64 beforeToolbarStop = source->buffer.audio.frames(); workspace->setActiveSubWindow(secondWindow);
+    bool globalFound = false;
+    for (auto *action : window.findChildren<QAction *>()) if (action->text() == "Detener") { globalFound = true; action->trigger(); break; }
+    wait();
+    check(globalFound && source->active() && source->buffer.audio.frames() > beforeToolbarStop && first->data.frames() == existing, "bottom Stop leaves capture in unfocused window running");
+    const qint64 focusedTake = source->buffer.audio.frames(); workspace->setActiveSubWindow(firstWindow);
+    for (auto *action : window.findChildren<QAction *>()) if (action->text() == "Detener") { action->trigger(); break; }
+    check(!source->active() && first->data.frames() == existing + focusedTake, "bottom Stop commits capture only when its owner is focused");
+    first->undo.undo(); first->undo.undo();
+    check(first->data.frames() == 0, "empty focused document fixture");
+    second->record(); wait(); workspace->setActiveSubWindow(firstWindow);
+    const qint64 beforeEmptyPlay = source->buffer.audio.frames(); bool playFound = false;
+    for (auto *action : window.findChildren<QAction *>()) if (action->text() == "Reproducir / detener") { playFound = true; action->trigger(); break; }
+    wait();
+    check(playFound && source->active() && source->buffer.audio.frames() > beforeEmptyPlay && first->data.frames() == 0, "bottom Play on empty focused window leaves other capture running");
+    workspace->setActiveSubWindow(secondWindow);
+    for (auto *action : window.findChildren<QAction *>()) if (action->text() == "Detener") { action->trigger(); break; }
+    check(!source->active(), "bottom Stop follows newly focused recording window");
     for (auto *child : workspace->subWindowList()) static_cast<Document *>(child->widget())->undo.setClean();
     window.close(); return failures;
 }

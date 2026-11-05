@@ -11,7 +11,7 @@
 // WAVE_MAPPER: el dispositivo predeterminado del sistema.
 static const quint32 DefaultDevice = 0xffffffffu;
 
-OptionsDialog::OptionsDialog(const QVector<QPair<quint32, QString>> &devices, quint32 current, QWidget *parent) : QDialog(parent) {
+OptionsDialog::OptionsDialog(const QVector<QPair<quint32, QString>> &outputs, quint32 currentOutput, const QVector<QPair<quint32, QString>> &inputs, quint32 currentInput, QWidget *parent) : QDialog(parent) {
     setObjectName("optionsDialog");
     setWindowTitle("Opciones generales");
     auto *root = new QHBoxLayout(this);
@@ -29,8 +29,8 @@ OptionsDialog::OptionsDialog(const QVector<QPair<quint32, QString>> &devices, qu
     auto *deviceLabel = new QLabel("Dispositivo:", this); deviceLabel->setObjectName("processParameter");
     deviceBox = new QComboBox(this); deviceBox->setObjectName("optionsOutput");
     deviceBox->addItem("Predeterminado del sistema", DefaultDevice);
-    for (const auto &device : devices) deviceBox->addItem(device.second, device.first);
-    const int index = deviceBox->findData(current);
+    for (const auto &device : outputs) deviceBox->addItem(device.second, device.first);
+    const int index = deviceBox->findData(currentOutput);
     deviceBox->setCurrentIndex(index >= 0 ? index : 0);
     testButton = new QPushButton("Probar", this); testButton->setObjectName("optionsTest");
     testButton->setToolTip("Reproduce un tono corto por el dispositivo elegido");
@@ -40,6 +40,22 @@ OptionsDialog::OptionsDialog(const QVector<QPair<quint32, QString>> &devices, qu
     hint->setObjectName("processFooter"); hint->setWordWrap(true);
     audioLayout->addWidget(hint);
     content->addWidget(audio);
+
+    auto *input = new QGroupBox("Grabación", this); input->setObjectName("optionsGroup");
+    auto *inputLayout = new QVBoxLayout(input); inputLayout->setSpacing(8);
+    auto *inputRow = new QHBoxLayout; inputRow->setSpacing(8);
+    auto *inputLabel = new QLabel("Dispositivo de entrada:", this); inputLabel->setObjectName("processParameter");
+    inputBox = new QComboBox(this); inputBox->setObjectName("optionsInput");
+    inputBox->addItem("Predeterminado del sistema", DefaultDevice);
+    for (const auto &device : inputs) inputBox->addItem(device.second, device.first);
+    const int inputIndex = inputBox->findData(currentInput);
+    inputBox->setCurrentIndex(inputIndex >= 0 ? inputIndex : 0);
+    inputRow->addWidget(inputLabel); inputRow->addWidget(inputBox, 1);
+    inputLayout->addLayout(inputRow);
+    auto *inputHint = new QLabel("Es la entrada que usa Grabar, tanto en el módulo como en la barra inferior.", this);
+    inputHint->setObjectName("processFooter"); inputHint->setWordWrap(true);
+    inputLayout->addWidget(inputHint);
+    content->addWidget(input);
     content->addStretch();
 
     connect(testButton, &QPushButton::clicked, this, [this] {
@@ -59,9 +75,10 @@ OptionsDialog::OptionsDialog(const QVector<QPair<quint32, QString>> &devices, qu
             "Dispositivo de salida: tarjeta o interfaz por la que se reproduce el audio y la previsualización de los procesos. "
             "«Predeterminado del sistema» usa el dispositivo configurado en Windows.\n\n"
             "Probar reproduce medio segundo de un tono de 440 Hz por el dispositivo elegido, sin tocar el documento.\n\n"
-            "El ajuste se guarda para las próximas sesiones.");
+            "Dispositivo de grabación: entrada que se abre al pulsar Grabar.\n\nEl ajuste se guarda para las próximas sesiones.");
     });
     setMinimumWidth(560);
 }
 
 quint32 OptionsDialog::outputDevice() const { return deviceBox->currentData().toUInt(); }
+quint32 OptionsDialog::inputDevice() const { return inputBox->currentData().toUInt(); }

@@ -1,4 +1,4 @@
-# ForgeCraft 0.1.1
+# ForgeCraft 0.1.2
 
 Editor de audio para Windows, inspirado en la estética y el flujo de los editores clásicos como Sound Forge 4.5. Implementación propia en **Qt Widgets 6.7.0, C++17 y MinGW 11.2 de 64 bits**, el mismo kit configurado en Radit.
 
@@ -10,15 +10,14 @@ Editor de audio para Windows, inspirado en la estética y el flujo de los editor
 |---|---|
 | [![Diálogo de proceso con sliders](forgecraft-proceso.png)](forgecraft-proceso.png) | [![Módulo minimizado al pie](forgecraft-minimizado.png)](forgecraft-minimizado.png) |
 | Diálogos de Proceso y Efectos con sliders, pie de selección y Previsualizar/Bypass. | Documento minimizado como botón al pie del área de trabajo. |
-| [![Diálogo de grabación](forgecraft-grabacion.png)](forgecraft-grabacion.png) | [![Cuadro de documento nuevo](forgecraft-nuevo.png)](forgecraft-nuevo.png) |
-| Grabación con monitorización permanente; cada toma va al documento al detener. | Documento nuevo: frecuencia, profundidad y canales. |
-
-| [![Ventana Acerca de](forgecraft-acerca.png)](forgecraft-acerca.png) | [![Cuadro de mezcla](forgecraft-mezcla.png)](forgecraft-mezcla.png) |
-| Ventana «Acerca de» con la disposición de Radit. | Mezcla al arrastrar entre ventanas: volumen de cada parte y desplazamiento. |
+| [![Cuadro de documento nuevo](forgecraft-nuevo.png)](forgecraft-nuevo.png) | [![Ventana Acerca de](forgecraft-acerca.png)](forgecraft-acerca.png) |
+| Documento nuevo: frecuencia, profundidad y canales. | Ventana «Acerca de» con la disposición de Radit. |
+| [![Cuadro de mezcla](forgecraft-mezcla.png)](forgecraft-mezcla.png) | |
+| Mezcla al arrastrar entre ventanas: volumen de cada parte y desplazamiento. | |
 
 ## Descarga
 
-El paquete para Windows de 64 bits se publica en la página de *Releases* del repositorio: descomprimir `forgecraft_0_1_1.zip` y ejecutar `forgecraft_0_1_0\forgecraft.exe`. No requiere instalación. El paquete incluye las DLL de Qt, los plugins, los códecs MP3, la hoja de estilo y las licencias; los detalles están en `README.txt` del propio paquete.
+[Descargar ForgeCraft 0.1.2 para Windows de 64 bits](https://github.com/valgaba/forgecraft/releases/download/forgecraft-0.1.2/forgecraft_0_1_2.zip). Descomprimir `forgecraft_0_1_2.zip` y ejecutar `forgecraft_0_1_2\forgecraft.exe`. No requiere instalación. El paquete incluye las DLL de Qt, los plugins, los códecs MP3, la hoja de estilo y las licencias; los detalles están en `README.txt` del propio paquete. La [página de la versión](https://github.com/valgaba/forgecraft/releases/tag/forgecraft-0.1.2) incluye la suma SHA256.
 
 ## Estructura
 
@@ -70,9 +69,12 @@ Los valores de la hoja están ampliados respecto a Radit (barra de desplazamient
 
 ## Funciones actuales
 
+- El área de trabajo empieza vacía, sin un documento MDI predeterminado. Los documentos se crean con Nuevo, Abrir o al comenzar una grabación.
+- **Seguir reproducción**: botón activable junto a Play en cada MDI y en el transporte inferior. Activado por defecto, desplaza la vista para mantener visible la línea roja. Desactivado, la vista permanece fija y permite explorar el audio mientras sigue sonando. Cada MDI conserva su estado; el botón inferior controla el enfocado. Al reactivarlo, la vista vuelve a la posición actual de reproducción.
+
 - Ventanas de audio MDI superpuestas, con cascada y mosaico, con módulos de marco propio (barra de título con minimizar y cerrar, y bordes redimensionables).
 - Interfaz oscura con la identidad visual de Radit: superficies planas, acento `#80A4AE` y formas de onda sobre lienzo oscuro con reglas de tiempo por documento.
-- Medidores verticales de pico estéreo a la derecha y transporte inferior, con controles adicionales en cada documento. **Opciones → Opciones generales…** (Ctrl+,) permite elegir el **dispositivo de salida** (con un botón **Probar** que reproduce un tono) y se guarda para las próximas sesiones.
+- Los vúmetros estéreo horizontales de **Entrada** (grabación) y **Salida** (reproducción y previsualización) están en la misma fila de los controles comunes, inmediatamente después del tiempo. **Ver → Vúmetros** permite mostrarlos u ocultarlos. La barra de transporte inferior es común a todos los documentos. **Opciones → Opciones generales…** (Ctrl+,) permite elegir el **dispositivo de salida** (con un botón **Probar** que reproduce un tono) y el **dispositivo de grabación**; ambos se guardan para las próximas sesiones.
 - Abrir WAV mono/estéreo PCM 8, 16, 24 y 32 bits, o float de 32 bits.
 - Abrir MP3 mono/estéreo, incluidos archivos con bitrate variable.
 - **Nuevo** abre un cuadro con frecuencia (8.000 a 192.000 Hz), profundidad (8, 16, 24 bits o 32 float), canales (mono/estéreo) y el tiempo máximo de edición; el documento se crea con ese formato.
@@ -80,7 +82,7 @@ Los valores de la hoja están ampliados respecto a Radit (barra de desplazamient
 - Guardar MP3 con LAME a 128, 192, 256 o 320 kbps CBR; cabecera LAME con duración y datos para reproducción sin huecos.
 - Selección con ratón, doble clic para seleccionar todo, zoom y desplazamiento.
 - Los extremos de la selección se arrastran: al acercar el puntero a uno de ellos cambia a flecha doble y se puede ampliar o reducir la selección desde ese borde, con el otro extremo fijo.
-- Arrastrar una parte seleccionada fuera de la forma de onda la copia: si se suelta sobre el área de trabajo se abre un documento nuevo con ese fragmento, y si se suelta sobre otro módulo se coloca en su documento en el punto donde se suelta (deshacible allí). Mientras se arrastra, la barra de estado muestra la **duración del fragmento** y la ventana sobre la que se soltaría, y en esa ventana se dibuja el **fantasma del tramo** en la posición donde caería. El documento de origen no cambia. **Edición → Al soltar en otra ventana** elige qué se hace: **Insertar en el punto de destino** (por omisión) o **Mezclar con el audio de destino**. Al mezclar se abre un cuadro con dos **sliders verticales** (volumen del fragmento y del destino, de silencio a +15 dB), presets (50/50, voz sobre mezcla, instrumento sobre mezcla), un **desplazamiento** de hasta medio segundo y **Previsualizar**, que reproduce la mezcla con los valores actuales sin aplicarla; la mezcla se satura a ±1 y amplía el documento si el fragmento sobrepasa el final. Cada mezcla es una sola operación de deshacer.
+- Arrastrar una parte seleccionada fuera de la forma de onda la copia: si se suelta sobre el área de trabajo se abre un documento nuevo con ese fragmento, y si se suelta sobre otro módulo se coloca en su documento en el punto donde se suelta (deshacible allí). Mientras se arrastra, la barra de estado muestra la **duración del fragmento** y la ventana sobre la que se soltaría, y en esa ventana se dibuja el **fantasma del tramo al mezclar** o una **línea vertical al insertar**. Durante el arrastre, un **clic derecho manteniendo pulsado el izquierdo** alterna entre mezclar e insertar y actualiza la vista previa y la opción del menú. El documento de origen no cambia. **Edición → Al soltar en otra ventana** elige qué se hace: **Mezclar con el audio de destino** (por omisión) o **Insertar en el punto de destino**. Al mezclar se abre un cuadro con dos **sliders verticales** (volumen del fragmento y del destino, de silencio a +15 dB), presets (50/50, voz sobre mezcla, instrumento sobre mezcla), un **desplazamiento** de hasta medio segundo y **Previsualizar**, que reproduce la mezcla con los valores actuales sin aplicarla; la mezcla se satura a ±1 y amplía el documento si el fragmento sobrepasa el final. Cada mezcla es una sola operación de deshacer.
 - Copiar o cortar una selección y pegarla en otro módulo, con el portapapeles compartido entre documentos.
 - **Marcas de posición**: **M** inserta una marca en el cursor (Marca 01, Marca 02…), dibujada en **rojo** con un banderín en la regla, línea de puntos sobre la onda y su nombre y hora al pasar el puntero o al seleccionarla. **Doble clic** en el banderín la renombra; **botón derecho** sobre él abre el menú con **Renombrar** y **Eliminar**; **Mayús+M** elimina la más cercana al cursor. **Doble clic entre dos marcas** selecciona ese tramo. Las marcas se desplazan al insertar, pegar o recortar, y viajan con el audio al copiar o arrastrar un fragmento.
 - Menú contextual con el botón derecho sobre el área de trabajo y sobre la forma de onda, con las mismas acciones que el menú Edición (deshacer, rehacer, cortar, copiar, pegar, eliminar, recortar y seleccionar todo).
@@ -93,7 +95,7 @@ Los valores de la hoja están ampliados respecto a Radit (barra de desplazamient
 - Campos de inicio, final y duración de selección en cada ventana.
 - Grabación PCM de 16 bits con dispositivo de entrada, mono/estéreo, monitorización permanente de niveles, pausa/reanudación, límite de duración y ajuste DC automático.
 
-Espacio reproduce/detiene; Esc detiene; Ctrl+rueda cambia el zoom; rueda desplaza la vista. Sin selección, los procesos afectan a todo el audio; borrar y recortar requieren selección. Pegar requiere la misma frecuencia y número de canales, salvo en un documento vacío.
+Play y Stop de la barra inferior actúan sobre el MDI enfocado: Espacio alterna su reproducción y Esc detiene su reproducción o grabación. Stop no interrumpe la toma de otro MDI. Los botones dentro de cada módulo actúan sobre su propio documento. Ctrl+rueda cambia el zoom; rueda desplaza la vista. Sin selección, los procesos afectan a todo el audio; borrar y recortar requieren selección. Pegar requiere la misma frecuencia y número de canales, salvo en un documento vacío.
 
 ## Menús Proceso y Efectos
 
@@ -111,6 +113,10 @@ Referencias técnicas: filtros biquad según el [Audio EQ Cookbook del W3C](http
 
 ## Abrir y guardar MP3
 
+Al abrir un WAV o MP3 aparece una barra de progreso con el nombre del archivo y el porcentaje de carga. Incluye la lectura/decodificación y la preparación de la forma de onda, realizadas en segundo plano. **Cancelar** interrumpe la carga sin modificar los documentos abiertos. También se muestra al cargar archivos arrastrándolos al editor.
+
+La carga evita copias completas innecesarias y Play utiliza las muestras directamente cuando la salida admite float32, con compatibilidad PCM16. El primer clic reinicia también una reproducción que acaba de terminar, aunque el temporizador aún no haya limpiado su estado. Si se cambia el cursor o la selección mientras suena audio, Play en los controles comunes reinicia desde el nuevo tramo con una sola pulsación. La barra común incluye Ir al inicio e Ir al final (Home/End) y prescinde del botón de bucle. Mediciones y alcance de las pruebas: [rendimiento de audio](docs/rendimiento-audio.md).
+
 Usar **Archivo → Abrir audio** para cargar WAV o MP3. Para convertir un WAV a MP3, usar **Archivo → Guardar como** y elegir **Audio MP3**; al cambiar el filtro se adapta la extensión. Al guardar se pide la calidad, con 192 kbps como valor inicial. Guardar un documento abierto desde MP3 conserva ese formato y permite elegir de nuevo la calidad.
 
 La exportación conserva 32.000, 44.100 o 48.000 Hz. Para otras frecuencias, LAME convierte a 44.100 Hz tras avisar al usuario; el documento en memoria no se remuestrea. La exportación codifica el audio editado completo y no conserva etiquetas ID3 ni carátulas. MP3 usa compresión con pérdida; para evitar sucesivas recodificaciones, conservar un original WAV cuando sea necesario.
@@ -119,19 +125,18 @@ Los codecs `libmpg123-0.dll` y `libmp3lame-0.dll` se cargan desde la carpeta del
 
 ## Grabación
 
-Pulsar **Ctrl+R** o el botón rojo de la barra de transporte inferior o de una ventana de audio. El menú Transporte ya no existe: sus acciones están en esa barra.
+Pulsar **Ctrl+R**, el botón rojo de la barra de transporte inferior o el de una ventana de audio. **No hay cuadro de grabación**: se graba directamente en el documento enfocado, que se crea si no hay ninguno («Grabación 1», «Grabación 2»…).
 
-1. Elegir entrada, frecuencia y mono/estéreo. La captura usa PCM de 16 bits mediante la API `waveIn` de Windows; la disponibilidad de cada formato depende del dispositivo.
-2. El destino es siempre el documento enfocado. Si ya tiene audio, el formato de grabación queda fijado al suyo para evitar conversiones implícitas; si está vacío, se puede elegir la frecuencia y los canales.
-3. La **monitorización va siempre activa**: al abrir el diálogo la entrada ya está escuchándose, los medidores muestran el nivel y no se añade audio. Es visual, no envía el micrófono a los altavoces. Al cambiar de entrada o de formato la captura se reabre con los nuevos ajustes.
-4. **Grabar** inicia la toma; **Pausa** y **Continuar** excluyen el tiempo de pausa.
-5. **Detener** entrega la toma **directamente al documento enfocado**, como una operación de deshacer; si el documento ya tenía audio, la toma se añade **al final**, sin tocar lo anterior. El contador vuelve a cero y el diálogo sigue abierto y monitorizando, listo para otra toma. Al cerrar con una grabación en curso, lo capturado hasta ese momento se añade igualmente.
+1. La entrada se elige en **Opciones → Opciones generales… → Grabación**. La captura usa PCM de 16 bits mediante la API `waveIn` de Windows.
+2. El formato sale del documento: si ya tiene audio se usa su frecuencia y sus canales; si está vacío, 44.100 Hz estéreo.
+3. Mientras se graba, el **vúmetro de Entrada** de los controles comunes muestra el nivel de entrada y la barra de estado el tiempo acumulado. Volver a pulsar Grabar detiene la captura. Stop o **Esc** en la barra inferior la detienen cuando está enfocado el MDI que graba; el Stop de ese módulo también la detiene.
+4. Al detener, la toma se añade **al final del documento** como una operación de deshacer; lo que ya había no se toca.
 
-La duración máxima puede limitarse en segundos; cero significa sin límite de tiempo adicional. Todas las tomas tienen un límite de 512 MB de muestras en memoria (aproximadamente 25 minutos a 44.100 Hz estéreo). El tiempo disponible se calcula sobre ese límite, no sobre el espacio de disco. El **ajuste DC** (filtro paso alto a 20 Hz) va activado siempre, sin casilla: quita la componente continua que algunas entradas añaden y que desplaza la forma de onda. La selección de formato se bloquea mientras existe audio pendiente. Si una inserción no cabe o no es compatible, la toma se conserva en una ventana nueva.
+El **ajuste DC** (filtro paso alto a 20 Hz) va siempre activo: quita la componente continua que algunas entradas añaden. Todas las tomas tienen un límite de 512 MB de muestras en memoria (aproximadamente 25 minutos a 44.100 Hz estéreo). Si la toma no cabe en el documento se avisa y no se modifica nada.
 
-Los errores de entrada se muestran sin modificar el documento. Si Windows bloquea el micrófono, revisar sus permisos para aplicaciones de escritorio en **Configuración → Privacidad → Micrófono**. Esta versión no incorpora grabación remota, sincronización externa, creación automática de regiones ni escucha de entrada por los altavoces.
+Los errores de entrada se muestran en un aviso, sin tocar el documento. Si Windows bloquea el micrófono, revisar sus permisos para aplicaciones de escritorio en **Configuración → Privacidad → Micrófono**. Esta versión no incorpora grabación remota, sincronización externa ni escucha de entrada por los altavoces.
 
-Las pruebas automáticas de grabación usan una fuente PCM sintética y verifican conversión, monitorización automática, pausa, límites, inserción/sustitución, deshacer/rehacer, descarte y guardado WAV/MP3. También comprueban enumeración de entradas y errores nativos de dispositivo. No activan el micrófono: la captura física y sus niveles deben comprobarse abriendo el diálogo con un dispositivo real. Vista de prueba: `out/build/recording-dialog.png`.
+Las pruebas automáticas de grabación usan una fuente PCM sintética y verifican la conversión de PCM, el filtro DC, el límite de duración, la mezcla en el documento y los errores de dispositivo. No activan el micrófono: la captura física debe comprobarse con un dispositivo real.
 
 ## Compilar y verificar
 
@@ -160,10 +165,10 @@ Start-Process .\out\bin\forgecraft.exe -ArgumentList '--smoke-test' -Wait
 Con el ejecutable ya desplegado:
 
 ```powershell
-.\package.ps1 -Version 0.1.1
+.\package.ps1 -Version 0.1.2
 ```
 
-Genera `out/packages/forgecraft_0_1_1.zip` con el ejecutable, la hoja de estilo, las DLL, los plugins (`platforms`, `iconengines`, `imageformats`), los códecs MP3, las licencias y los textos de instalación, y escribe `out/packages/SHA256SUMS.txt`. Ese zip y el archivo de sumas son los dos assets que se adjuntan a la Release; los binarios no se guardan en el repositorio.
+Genera `out/packages/forgecraft_0_1_2.zip` con el ejecutable, la hoja de estilo, las DLL, los plugins (`platforms`, `iconengines`, `imageformats`), los códecs MP3, las licencias y los textos de instalación, y escribe `out/packages/SHA256SUMS.txt`. Ese zip y el archivo de sumas son los dos assets que se adjuntan a la Release; los binarios no se guardan en el repositorio.
 
 ## Alcance de esta versión
 

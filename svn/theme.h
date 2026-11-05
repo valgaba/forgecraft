@@ -10,7 +10,7 @@
 // de la apariencia. Este encabezado existe para lo que la hoja de estilo no
 // alcanza: la paleta de respaldo de Qt (flechas de menú, controles que dibuja
 // el estilo nativo), las constantes con nombre de los widgets pintados a mano
-// (Waveform y LevelMeter) y el tinte de los iconos del tema.
+// (Waveform y VuMeter) y el tinte de los iconos del tema.
 //
 // Referencia: docs/analisis-estilo-radit.md §3.2 y §9.
 namespace Theme {

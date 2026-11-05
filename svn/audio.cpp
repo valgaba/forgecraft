@@ -12,19 +12,32 @@ static quint32 u32(const char *p) { return qFromLittleEndian<quint32>(p); }
 static void put16(QByteArray &b, quint16 n) { char p[2]; qToLittleEndian(n, p); b.append(p, 2); }
 static void put32(QByteArray &b, quint32 n) { char p[4]; qToLittleEndian(n, p); b.append(p, 4); }
 
-bool AudioData::read(const QString &path, AudioData &out, QString &error) {
+bool AudioData::read(const QString &path, AudioData &out, QString &error, const ReadProgress &progress) {
     error.clear();
-    if (path.endsWith(".mp3", Qt::CaseInsensitive)) return Mp3::read(path, out, error);
+    if (path.endsWith(".mp3", Qt::CaseInsensitive)) return Mp3::read(path, out, error, progress);
+    auto report = [&](int percent) { if (progress && !progress(percent)) { error = "Carga cancelada."; return false; } return true; };
+    if (!report(0)) return false;
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) { error = file.errorString(); return false; }
     if (file.size() > 512 * 1024 * 1024) { error = "El límite de esta versión es 512 MB por archivo."; return false; }
-    const QByteArray bytes = file.readAll();
+    QByteArray bytes;
+    const qint64 fileSize = file.size();
+    bytes.reserve(fileSize);
+    while (!file.atEnd()) {
+        const QByteArray chunk = file.read(1024 * 1024);
+        if (chunk.isEmpty() && file.error() != QFileDevice::NoError) { error = file.errorString(); return false; }
+        if (chunk.isEmpty()) break;
+        bytes.append(chunk);
+        if (bytes.size() > 512 * 1024 * 1024) { error = "El archivo supera el límite de 512 MB."; return false; }
+        if (!report(int(qMin(qint64(30), bytes.size() * 30 / qMax(qint64(1), fileSize))))) return false;
+    }
     if (bytes.size() < 12 || bytes.first(4) != "RIFF" || bytes.mid(8, 4) != "WAVE") {
         error = "Selecciona un archivo WAV o MP3 válido."; return false;
     }
     int format = 0, channels = 0, bits = 0, rate = 0, align = 0;
-    QByteArray pcm;
+    qint64 pcmOffset = -1, pcmSize = 0;
     for (qint64 pos = 12; pos + 8 <= bytes.size();) {
+        if (!report(30)) return false;
         const quint32 size = u32(bytes.constData() + pos + 4);
         if (pos + 8 + size > bytes.size()) { error = "El archivo WAV está truncado."; return false; }
         const QByteArray id = bytes.mid(pos, 4);
@@ -33,28 +46,32 @@ bool AudioData::read(const QString &path, AudioData &out, QString &error) {
             format = u16(p); channels = u16(p + 2); rate = int(u32(p + 4));
             align = u16(p + 12); bits = u16(p + 14);
             if (format == 0xfffe && size >= 40) format = u16(p + 24);
-        } else if (id == "data") pcm = bytes.mid(pos + 8, size);
+        } else if (id == "data") { pcmOffset = pos + 8; pcmSize = size; }
         pos += 8 + size + (size & 1);
     }
     if ((channels != 1 && channels != 2) || rate < 8000 || rate > 384000 ||
         !((format == 1 && (bits == 8 || bits == 16 || bits == 24 || bits == 32)) || (format == 3 && bits == 32)) ||
-        align != channels * (bits / 8) || pcm.size() % align) {
+        align != channels * (bits / 8) || pcmOffset < 0 || pcmSize % align) {
         error = "Formato no compatible. Usa WAV mono/estéreo PCM de 8/16/24/32 bits o float de 32 bits."; return false;
     }
     AudioData result; result.rate = rate; result.channels = channels;
     result.bitDepth = bits;                       // 8, 16, 24 o 32
     result.floatFormat = format == 3;             // 32 en coma flotante
-    result.samples.resize(pcm.size() / (bits / 8));
+    result.samples.resize(pcmSize / (bits / 8));
+    float *destination = result.samples.data();
+    const char *pcm = bytes.constData() + pcmOffset;
     for (qsizetype i = 0; i < result.samples.size(); ++i) {
-        const char *p = pcm.constData() + i * (bits / 8);
+        if ((i & 16383) == 0 && !report(30 + int(i * 69 / qMax(qsizetype(1), result.samples.size())))) return false;
+        const char *p = pcm + i * (bits / 8);
         double v = 0;
         if (format == 3) { quint32 raw = u32(p); float f; std::memcpy(&f, &raw, 4); v = std::isfinite(f) ? f : 0; }
         else if (bits == 8) v = (quint8(*p) - 128) / 128.0;
         else if (bits == 16) v = qint16(u16(p)) / 32768.0;
         else if (bits == 24) { qint32 n = quint8(p[0]) | (quint8(p[1]) << 8) | (quint8(p[2]) << 16); if (n & 0x800000) n |= ~0xffffff; v = n / 8388608.0; }
         else v = qint32(u32(p)) / 2147483648.0;
-        result.samples[i] = float(std::clamp(v, -1.0, 1.0));
+        destination[i] = float(std::clamp(v, -1.0, 1.0));
     }
+    if (!report(100)) return false;
     out = std::move(result); return true;
 }
 

@@ -36,7 +36,11 @@
 
 int dspTests();
 int recordingTests();
-int recordingUiTests();
+int recordingScopeTests();
+int loadingProgressTests();
+int loadingUiTests();
+int audioBenchmark();
+int playbackTests();
 
 static int selfTest() {
     int failures = 0;
@@ -102,6 +106,10 @@ static int selfTest() {
     Document doc; doc.data = a; doc.undo.push(new QUndoCommand("change")); check(!doc.undo.isClean(), "document dirty state"); doc.undo.undo(); check(doc.undo.isClean(), "document undo clean state");
     failures += dspTests();
     failures += recordingTests();
+    failures += recordingScopeTests();
+    failures += loadingProgressTests();
+    failures += loadingUiTests();
+    failures += playbackTests();
     std::printf("%d failure(s)\n", failures); return failures ? 1 : 0;
 }
 // Aplica la identidad visual RADIT: estilo Fusion (dibuja con la paleta, sin
@@ -130,9 +138,10 @@ static void applyTheme(QApplication &app) {
 }
 
 int main(int argc, char **argv) {
-    QApplication app(argc, argv); app.setApplicationName("ForgeCraft"); app.setApplicationVersion("0.1.1"); app.setOrganizationName("ForgeCraft");
+    QApplication app(argc, argv); app.setApplicationName("ForgeCraft"); app.setApplicationVersion("0.1.2"); app.setOrganizationName("ForgeCraft");
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/ForgeCraftAppIcon.png")));
     applyTheme(app);
+    if (app.arguments().contains("--benchmark-audio")) return audioBenchmark();
     if (app.arguments().contains("--self-test")) return selfTest();
     if (app.arguments().contains("--smoke-test")) app.setAttribute(Qt::AA_DontUseNativeDialogs);
     MainWindow window; window.show();
@@ -380,6 +389,68 @@ int main(int argc, char **argv) {
                 workspace->setActiveSubWindow(audioWindow);
             }
             // Soltar la selección sobre otro módulo la inserta en su documento.
+            // Seguimiento por MDI: la barra común controla solo el enfocado.
+            auto *followAction = window.findChild<QAction *>("followPlaybackAction");
+            workspace->setActiveSubWindow(audioWindow);
+            const double previousZoom = doc->wave->zoom;
+            const qint64 previousStart = doc->wave->start;
+            doc->wave->zoom = 4; doc->wave->start = 0;
+            const qint64 viewFrames = doc->wave->visibleFrames();
+            doc->wave->setPlayhead(viewFrames);
+            bool followed = doc->wave->start == viewFrames && followAction && followAction->isChecked();
+            if (followAction) followAction->trigger();
+            const qint64 fixedStart = doc->wave->start;
+            doc->wave->setPlayhead(doc->data.frames());
+            bool fixedView = !doc->wave->followPlayback && !doc->followButton->isChecked()
+                && doc->wave->start == fixedStart && doc->wave->playhead == doc->data.frames();
+            auto *otherDoc = static_cast<Document *>(blank1->widget());
+            workspace->setActiveSubWindow(blank1);
+            bool independentFollow = followAction && followAction->isChecked() && otherDoc->wave->followPlayback;
+            if (followAction) followAction->trigger();
+            workspace->setActiveSubWindow(audioWindow);
+            independentFollow &= !followAction->isChecked() && !doc->wave->followPlayback && !otherDoc->wave->followPlayback;
+            doc->followButton->click();
+            followed &= followAction->isChecked() && doc->wave->followPlayback
+                && doc->wave->start == doc->data.frames() - viewFrames;
+            doc->wave->setPlayhead(0);
+            followed &= doc->wave->start == 0;
+            ok &= followed && fixedView && independentFollow;
+            std::printf("%s UI playback follow toggles per MDI, synchronizes both buttons and restores an offscreen playhead without overscrolling\n", (followed && fixedView && independentFollow) ? "PASS" : "FAIL");
+            doc->wave->zoom = previousZoom; doc->wave->start = previousStart;
+            doc->wave->setPlayhead(-1); otherDoc->followButton->setChecked(true);
+            auto *dropMixAction = window.findChild<QAction *>("dropMix");
+            auto *dropInsertAction = window.findChild<QAction *>("dropInsert");
+            const bool defaultMix = dropMixAction && dropInsertAction && dropMixAction->isChecked() && !dropInsertAction->isChecked();
+            ok &= defaultMix;
+            std::printf("%s UI selection drops default to mixing\n", defaultMix ? "PASS" : "FAIL");
+            // La inserción dibuja únicamente una línea vertical; la mezcla muestra el tramo.
+            Waveform preview;
+            preview.audio = &doc->data; preview.resize(640, 240);
+            const QImage cleanPreview = preview.grab().toImage();
+            const qint64 previewFrame = 44100;
+            const int insertionX = preview.pixelAt(previewFrame);
+            preview.setDropPreview(doc->data.samples.constData(), doc->data.channels, 22050, 66150, previewFrame, false);
+            const QImage insertPreview = preview.grab().toImage();
+            bool lineOnly = true;
+            int linePixels = 0;
+            for (int y = 0; y < cleanPreview.height(); ++y) for (int x = 0; x < cleanPreview.width(); ++x) {
+                if (cleanPreview.pixel(x, y) == insertPreview.pixel(x, y)) continue;
+                if (qAbs(x - insertionX) > 1) lineOnly = false;
+                ++linePixels;
+            }
+            lineOnly &= linePixels >= preview.height() - 4;
+            preview.clearDropPreview();
+            const bool clearedLine = preview.grab().toImage() == cleanPreview;
+            preview.setDropPreview(doc->data.samples.constData(), doc->data.channels, 22050, 66150, previewFrame, true);
+            const QImage mixPreview = preview.grab().toImage();
+            int ghostPixels = 0;
+            for (int y = 0; y < cleanPreview.height(); ++y) for (int x = insertionX + 2; x < cleanPreview.width(); ++x)
+                if (cleanPreview.pixel(x, y) != mixPreview.pixel(x, y)) ++ghostPixels;
+            insertPreview.save(QApplication::applicationDirPath() + "/../build/drop-insert-preview.png");
+            mixPreview.save(QApplication::applicationDirPath() + "/../build/drop-mix-preview.png");
+            const bool previewsOk = lineOnly && clearedLine && ghostPixels > 1000;
+            ok &= previewsOk;
+            std::printf("%s UI insert preview is a full-height line, mix preview is a ghost, and clearing removes the line\n", previewsOk ? "PASS" : "FAIL");
             blank1->setGeometry(700, 60, 700, 210); blank1->raise(); app.processEvents();
             auto *receiver = static_cast<Document *>(blank1->widget());
             const qint64 receiverBefore = receiver->data.frames();
@@ -387,6 +458,29 @@ int main(int argc, char **argv) {
             const QPoint dropGlobal = receiver->wave->mapToGlobal(QPoint(120, 90));
             sendMouse(doc->wave, QEvent::MouseButtonPress, QPoint(insideX, doc->wave->height() / 2), Qt::LeftButton);
             sendMouse(doc->wave, QEvent::MouseMove, doc->wave->mapFromGlobal(dropGlobal), Qt::LeftButton);
+            const auto rightClickDuringDrag = [&](QEvent::Type type = QEvent::MouseButtonPress) {
+                const QPoint local = doc->wave->mapFromGlobal(dropGlobal);
+                QMouseEvent press(type, local, dropGlobal, Qt::RightButton, Qt::LeftButton | Qt::RightButton, Qt::NoModifier);
+                QApplication::sendEvent(doc->wave, &press);
+                QMouseEvent release(QEvent::MouseButtonRelease, local, dropGlobal, Qt::RightButton, Qt::LeftButton, Qt::NoModifier);
+                QApplication::sendEvent(doc->wave, &release);
+            };
+            rightClickDuringDrag();
+            bool toggledMode = dropInsertAction && dropInsertAction->isChecked() && !dropMixAction->isChecked();
+            rightClickDuringDrag(QEvent::MouseButtonDblClick);
+            toggledMode &= dropMixAction && dropMixAction->isChecked() && !dropInsertAction->isChecked();
+            rightClickDuringDrag();
+            toggledMode &= dropInsertAction && dropInsertAction->isChecked() && doc->wave->selectionDragActive()
+                && doc->wave->last() - doc->wave->first() == fragmentFrames;
+            int dragContextMenus = 0;
+            const auto originalContextMenu = doc->contextMenu;
+            doc->contextMenu = [&](const QPoint &) { ++dragContextMenus; };
+            QContextMenuEvent dragContext(QContextMenuEvent::Mouse, doc->wave->mapFromGlobal(dropGlobal), dropGlobal);
+            QApplication::sendEvent(doc->wave, &dragContext);
+            doc->contextMenu = originalContextMenu;
+            toggledMode &= dragContextMenus == 0;
+            ok &= toggledMode;
+            std::printf("%s UI right clicks during a left-button drag toggle mix/insert without losing the selection or opening a menu\n", toggledMode ? "PASS" : "FAIL");
             sendMouse(doc->wave, QEvent::MouseButtonRelease, doc->wave->mapFromGlobal(dropGlobal), Qt::NoButton);
             const bool inserted = receiver->data.frames() == receiverBefore + fragmentFrames
                                   && workspace->subWindowList().size() == windowsBeforeInsert && doc->data.frames() == 132300;
@@ -545,7 +639,7 @@ int main(int argc, char **argv) {
             ok &= emptyInsert && background;
             workspace->closeAllSubWindows(); QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete); app.processEvents();
             std::printf("%s UI empty-document insert/undo/menu state; %s UI background drop preserves empty window\n", emptyInsert ? "PASS" : "FAIL", background ? "PASS" : "FAIL");
-            ok &= recordingUiTests() == 0;
+            ok &= loadingUiTests() == 0;
             // Ventana «Acerca de»: se abre, se captura y se cierra.
             ok &= !qApp->windowIcon().isNull();
             auto *about = new AboutDialog(&window);

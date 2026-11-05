@@ -1,9 +1,9 @@
 #include "mainwindow.h"
-#include "recorddialog.h"
 #include "aboutdialog.h"
 #include "newaudiodialog.h"
 #include "mixdialog.h"
 #include "optionsdialog.h"
+#include "recorder.h"
 #include "theme.h"
 #include <QApplication>
 #include <QActionGroup>
@@ -24,8 +24,13 @@
 #include <QStyle>
 #include <QUndoCommand>
 #include <QProgressBar>
+#include <QProgressDialog>
+#include <QFutureWatcher>
+#include <QElapsedTimer>
+#include <QEventLoop>
+#include <QtConcurrent>
+#include <atomic>
 #include <QPainter>
-#include <QDockWidget>
 #include <QToolButton>
 #include <QHBoxLayout>
 #include <QSignalBlocker>
@@ -35,12 +40,15 @@
 #include <QtEndian>
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <cstdio>
 #ifdef Q_OS_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
 #include <mmsystem.h>
+#include <mmreg.h>
 
 // Mezcla `fragment` sobre `destination` desde `at`, con el volumen de cada parte
 // y un desplazamiento opcional. Devuelve el resultado y el tramo modificado.
@@ -63,14 +71,19 @@ static AudioData blendFragment(AudioData destination, const AudioData &fragment,
 }
 #endif
 
+static QString timeText(qint64 frame, int rate);   // definida más abajo
 struct MainWindow::Playback {
 #ifdef Q_OS_WIN
     HWAVEOUT handle = nullptr;
     WAVEHDR header{};
 #endif
     QByteArray bytes;
+    AudioData source;    // Conserva las muestras durante toda la salida waveOut.
+    int bytesPerFrame = 0;
+    bool floatOutput = false;
     Document *document = nullptr;
     qint64 begin = 0, end = 0;
+    qint64 selectionAnchor = 0, selectionCursor = 0;
     bool loop = false;
 };
 
@@ -177,36 +190,6 @@ void ModuleGrip::paintEvent(QPaintEvent *) {
     for (int offset = 4; offset <= 12; offset += 4) p.drawLine(width() - 1 - offset, height() - 1, width() - 1, height() - 1 - offset);
 }
 
-void LevelMeter::paintEvent(QPaintEvent *) {
-    QPainter p(this);
-    p.fillRect(rect(), Theme::Window);
-    QFont label = font(); label.setPixelSize(Theme::MeterTextPx); p.setFont(label);
-    const int top = Theme::MeterTop, bottom = height() - Theme::MeterBottom;
-    const int last = qMax(0, height() - 1);
-    p.setPen(Theme::Border); p.drawLine(0, last, width() - 1, last);
-    const int span = Theme::MeterBarWidth * 2 + (Theme::MeterGap - Theme::MeterBarWidth);
-    const int startX = qMax(4, (width() - span) / 2);
-    for (int c = 0; c < 2; ++c) {
-        const int x = startX + c * Theme::MeterGap;
-        const QRect bar(x, top, Theme::MeterBarWidth, qMax(1, bottom - top));
-        const double db = levels[c] > 0 ? 20 * std::log10(levels[c]) : -60;
-        p.setPen(Theme::TextDim);
-        p.drawText(QRect(x - 8, 2, 33, top - 6), Qt::AlignCenter, levels[c] > 0 ? QString::number(db, 'f', 1) : "−Inf.");
-        p.fillRect(bar, Theme::Panel);
-        p.setPen(Theme::BorderMid); p.drawRect(bar);
-        const QRect inside = bar.adjusted(1, 1, -1, -1);
-        const int filled = int(inside.height() * std::clamp((db + 60) / 60, 0.0, 1.0));
-        if (filled > 0) p.fillRect(QRect(inside.left(), inside.bottom() - filled + 1, inside.width(), filled), Theme::Accent);
-        // Marca de pico de 2 px: retenida en setLevels, sin temporizador propio.
-        const double peakDb = peaks[c] > 0 ? 20 * std::log10(peaks[c]) : -60;
-        const double peakFraction = std::clamp((peakDb + 60) / 60, 0.0, 1.0);
-        if (peakFraction > 0.001) {
-            const int y = inside.bottom() - int(inside.height() * peakFraction) + 1;
-            p.fillRect(QRect(inside.left(), std::clamp(y, inside.top(), inside.bottom() - 1), inside.width(), 2), Theme::Text);
-        }
-    }
-}
-
 Document::Document(QWidget *parent) : QWidget(parent) {
     setObjectName("moduleFrame");
     setAttribute(Qt::WA_StyledBackground, true);
@@ -227,9 +210,10 @@ Document::Document(QWidget *parent) : QWidget(parent) {
     layout->addWidget(body, 1);
     auto *overview = new QFrame; overview->setObjectName("overviewStrip"); overview->setFixedHeight(11); content->addWidget(overview);
     wave = new Waveform(this); wave->audio = &data; content->addWidget(wave, 1); undo.setUndoLimit(20);
-    wave->setToolTip("Arrastra para seleccionar. Arrastra un extremo de la selección para ajustarla. Arrastra desde dentro de la selección y suéltala fuera de la onda para abrirla como documento nuevo o insertarla en otro módulo.");
+    wave->setToolTip("Arrastra para seleccionar. Arrastra un extremo de la selección para ajustarla. Arrastra desde dentro de la selección para copiarla a otro módulo o al área de trabajo. Durante el arrastre, clic derecho manteniendo el izquierdo para alternar entre mezclar e insertar.");
     wave->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(wave, &QWidget::customContextMenuRequested, this, [this](const QPoint &point) {
+        if (wave->selectionDragActive()) return;
         // Con el botón derecho sobre un banderín se abre el menú de la marca.
         const int marker = wave->markerAt(point);
         if (marker >= 0) { if (wave->markerMenu) wave->markerMenu(marker, wave->mapToGlobal(point)); return; }
@@ -245,13 +229,28 @@ Document::Document(QWidget *parent) : QWidget(parent) {
     button(navigation, "zoom-in", "Acercar", [this] { wave->zoomBy(2); emit wave->selectionChanged(); });
     button(navigation, "zoom-out", "Alejar", [this] { wave->zoomBy(.5); emit wave->selectionChanged(); });
     auto *row = new QHBoxLayout; row->setSpacing(3); content->addLayout(row);
-    auto *recordControl = new QToolButton; recordControl->setFixedSize(30, 28); recordControl->setToolTip("Grabar…");
-    QPixmap dot(16,16); dot.fill(Qt::transparent); { QPainter p(&dot); p.setPen(Theme::RecordDot.darker(150)); p.setBrush(Theme::RecordDot); p.drawEllipse(3,3,10,10); } recordControl->setIcon(QIcon(dot)); row->addWidget(recordControl);
+    auto *recordControl = new QToolButton; recordControl->setFixedSize(30, 28); recordControl->setToolTip("Grabar / detener");
+    { QPixmap dot(16,16); dot.fill(Qt::transparent); { QPainter p(&dot); p.setPen(Theme::RecordDot.darker(150)); p.setBrush(Theme::RecordDot); p.drawEllipse(3,3,10,10); } recordIcon = QIcon(dot); }
+    { QPixmap dot(16,16); dot.fill(Qt::transparent); { QPainter p(&dot); p.setPen(Theme::RecordDot.darker(150)); p.setBrush(Theme::RecordDot.darker(210)); p.drawEllipse(3,3,10,10); } recordIconDark = QIcon(dot); }
+    recordControl->setIcon(recordIcon); recordButton = recordControl; row->addWidget(recordControl);
     connect(recordControl, &QToolButton::clicked, this, [this] { if (record) record(); });
     button(row, "start", "Ir al inicio", [this] { if (beginning) beginning(); });
     button(row, "end", "Ir al final", [this] { if (ending) ending(); });
     button(row, "stop", "Detener", [this] { if (stop) stop(); });
     button(row, "play", "Reproducir", [this] { if (play) play(); });
+    followButton = new QToolButton;
+    followButton->setObjectName("followPlayback");
+    followButton->setAccessibleName("Seguir reproducción");
+    followButton->setIcon(Theme::icon("follow-playhead"));
+    followButton->setIconSize(QSize(18, 18)); followButton->setFixedSize(30, 28);
+    followButton->setCheckable(true); followButton->setChecked(wave->followPlayback);
+    followButton->setToolTip("Seguir reproducción: mantener visible la línea roja mediante desplazamiento automático");
+    row->addWidget(followButton);
+    connect(followButton, &QToolButton::toggled, this, [this](bool follow) {
+        wave->followPlayback = follow;
+        if (follow && wave->playhead >= 0) wave->setPlayhead(wave->playhead);
+        emit wave->selectionChanged();
+    });
     row->addStretch();
     position = new QLabel("00:00:00.000"); selectionEnd = new QLabel("00:00:00.000"); selectionLength = new QLabel("00:00:00.000");
     position->setToolTip("Inicio de selección"); selectionEnd->setToolTip("Final de selección"); selectionLength->setToolTip("Duración de selección");
@@ -262,6 +261,24 @@ Document::Document(QWidget *parent) : QWidget(parent) {
     };
 }
 
+void Document::setRecordingOn(bool on) {
+    if (recordOn == on) return;
+    recordOn = on;
+    recordBlink = false;
+    if (recordButton) recordButton->setIcon(recordIcon);
+    if (position) {
+        position->setStyleSheet(on ? QStringLiteral("color:#e06c6c;font-weight:bold;") : QString());
+        if (!on) position->setText(timeText(wave ? wave->cursor : 0, data.rate));
+    }
+}
+void Document::setRecordTime(qint64 frames, int rate) {
+    if (position) position->setText(timeText(frames, rate));
+}
+void Document::toggleRecordBlink() {
+    if (!recordButton || !recordOn) return;
+    recordBlink = !recordBlink;
+    recordButton->setIcon(recordBlink ? recordIcon : recordIconDark);
+}
 void Document::setTitle(const QString &title) {
     fullTitle = title;
     if (!titleLabel) return;
@@ -333,6 +350,7 @@ static QString timeText(qint64 frame, int rate) {
 
 MainWindow::MainWindow(std::function<Recorder *()> source) : playback(new Playback), recordingSource(std::move(source)) {
     outputDevice = QSettings().value("audio/outputDevice", quint32(0xffffffffu)).toUInt();
+    inputDevice = QSettings().value("audio/inputDevice", quint32(0xffffffffu)).toUInt();
     setWindowTitle("ForgeCraft"); resize(1500, 850);
     workspace = new QMdiArea(this); workspace->setObjectName("workspace"); setCentralWidget(workspace);
     auto *file = menuBar()->addMenu("&Archivo");
@@ -361,8 +379,8 @@ MainWindow::MainWindow(std::function<Recorder *()> source) : playback(new Playba
     file->addSeparator(); add(file, "&Cerrar documento", QKeySequence::Close, [this] { workspace->closeActiveSubWindow(); });
     add(file, "&Salir", QKeySequence::Quit, [this] { close(); });
     tools->addSeparator();
-    undoAction = add(editing, "&Deshacer", QKeySequence::Undo, [this] { stop(); if (current()) current()->undo.undo(); }, "undo"); tools->addAction(undoAction);
-    redoAction = add(editing, "&Rehacer", QKeySequence::Redo, [this] { stop(); if (current()) current()->undo.redo(); }, "redo"); tools->addAction(redoAction);
+    undoAction = add(editing, "&Deshacer", QKeySequence::Undo, [this] { stopPlayback(); if (current()) current()->undo.undo(); }, "undo"); tools->addAction(undoAction);
+    redoAction = add(editing, "&Rehacer", QKeySequence::Redo, [this] { stopPlayback(); if (current()) current()->undo.redo(); }, "redo"); tools->addAction(redoAction);
     editing->addSeparator();
     cutAction = add(editing, "Cor&tar", QKeySequence::Cut, [this] { copy(); edit("delete"); }, "cut"); tools->addAction(cutAction);
     copyAction = add(editing, "&Copiar", QKeySequence::Copy, [this] { copy(); }, "copy"); tools->addAction(copyAction);
@@ -376,9 +394,9 @@ MainWindow::MainWindow(std::function<Recorder *()> source) : playback(new Playba
     // Qué ocurre al soltar una selección sobre otra ventana de audio.
     auto *dropMenu = editing->addMenu("Al soltar en otra ventana");
     auto *insertDrop = dropMenu->addAction("Insertar en el punto de destino");
-    insertDrop->setObjectName("dropInsert"); insertDrop->setCheckable(true); insertDrop->setChecked(true);
+    insertDrop->setObjectName("dropInsert"); insertDrop->setCheckable(true);
     auto *mixDrop = dropMenu->addAction("Mezclar con el audio de destino");
-    mixDrop->setObjectName("dropMix"); mixDrop->setCheckable(true);
+    mixDrop->setObjectName("dropMix"); mixDrop->setCheckable(true); mixDrop->setChecked(true);
     auto *dropGroup = new QActionGroup(this); dropGroup->addAction(insertDrop); dropGroup->addAction(mixDrop); dropGroup->setExclusive(true);
     connect(insertDrop, &QAction::triggered, this, [this] { mixOnDrop = false; statusBar()->showMessage("Al soltar otra ventana: insertar en el punto.", 3000); });
     connect(mixDrop, &QAction::triggered, this, [this] { mixOnDrop = true; statusBar()->showMessage("Al soltar otra ventana: mezclar con el audio de destino.", 3000); });
@@ -390,17 +408,51 @@ MainWindow::MainWindow(std::function<Recorder *()> source) : playback(new Playba
     process->addSeparator(); add(process, "Generar &tono…", {}, [this] { tone(); });
     auto *controls = new QToolBar("Transporte", this); addToolBar(Qt::BottomToolBarArea, controls); controls->setObjectName("transport"); controls->setIconSize(QSize(24,24));
     auto *leftSpace = new QWidget; leftSpace->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred); controls->addWidget(leftSpace);
-    auto *recordAction = add(transport, "Grabar…", QKeySequence("Ctrl+R"), [this] { recordAudio(); }); recordAction->setObjectName("recordAudio");
+    auto *recordAction = add(transport, "Grabar", QKeySequence("Ctrl+R"), [this] { startRecording(); }); recordAction->setObjectName("recordAudio");
     QPixmap recordDot(20,20); recordDot.fill(Qt::transparent); { QPainter p(&recordDot); p.setPen(Theme::RecordDot.darker(150)); p.setBrush(Theme::RecordDot); p.drawEllipse(4,4,13,13); } recordAction->setIcon(QIcon(recordDot)); controls->addAction(recordAction);
-    controls->addAction(add(transport, "Ir al inicio", QKeySequence("Home"), [this] { stop(); if (current()) { current()->wave->anchor = current()->wave->cursor = 0; current()->wave->start = 0; refresh(); current()->wave->update(); } }, "start"));
-    controls->addAction(add(transport, "Reproducir / detener", QKeySequence("Space"), [this] { if (playback->document) stop(); else play(); }, "play"));
-    controls->addAction(add(transport, "Detener", QKeySequence("Esc"), [this] { stop(); }, "stop"));
-    controls->addAction(add(transport, "Reproducir en bucle", QKeySequence("Ctrl+L"), [this] { play(true); }, "loop"));
-    controls->addSeparator(); positionLabel = new QLabel; positionLabel->setObjectName("timeField"); positionLabel->setMinimumWidth(104); positionLabel->setAlignment(Qt::AlignCenter);
+    controls->addAction(add(transport, "Ir al inicio", QKeySequence("Home"), [this] { stopPlayback(); if (current()) { current()->wave->anchor = current()->wave->cursor = 0; current()->wave->start = 0; refresh(); current()->wave->update(); } }, "start"));
+    controls->addAction(add(transport, "Ir al final", QKeySequence("End"), [this] { if (auto *document = current(); document && document->ending) document->ending(); }, "end"));
+    controls->addAction(add(transport, "Reproducir / detener", QKeySequence("Space"), [this] {
+        auto *document = current();
+        if (!document) return;
+        // Cambiar el cursor o la selección prepara otro punto de arranque:
+        // una sola pulsación reinicia allí, en vez de limitarse a detener.
+        const bool sameSelection = document->wave->anchor == playback->selectionAnchor && document->wave->cursor == playback->selectionCursor;
+        if (playbackIsRunning(document) && sameSelection) stopPlayback();
+        else play();
+    }, "play"));
+    controls->addAction(add(transport, "Detener", QKeySequence("Esc"), [this] { stopDocument(current()); }, "stop"));
+    followPlaybackAction = new QAction(Theme::icon("follow-playhead"), "Seguir reproducción", this);
+    followPlaybackAction->setObjectName("followPlaybackAction");
+    followPlaybackAction->setCheckable(true);
+    followPlaybackAction->setToolTip("Seguir reproducción del MDI enfocado: mantener visible la línea roja mediante desplazamiento automático");
+    controls->addAction(followPlaybackAction);
+    connect(followPlaybackAction, &QAction::triggered, this, [this](bool follow) {
+        if (auto *d = current()) d->followButton->setChecked(follow);
+    });
+    controls->addSeparator(); positionLabel = new QLabel; positionLabel->setObjectName("timeField"); positionLabel->setMinimumWidth(104); positionLabel->setFixedHeight(24); positionLabel->setAlignment(Qt::AlignCenter);
     controls->addWidget(positionLabel);
+    auto *meterPanel = new QFrame;
+    meterPanel->setObjectName("commonVuMeters");
+    auto *meterLayout = new QHBoxLayout(meterPanel);
+    meterLayout->setContentsMargins(8, 0, 0, 0);
+    meterLayout->setSpacing(6);
+    meterLayout->addWidget(new QLabel("Entrada"));
+    inputVu = new VuMeter; inputVu->setObjectName("inputVu");
+    inputVu->setFixedSize(200, 16);
+    inputVu->setToolTip("Entrada L/R durante la grabación");
+    meterLayout->addWidget(inputVu);
+    meterLayout->addSpacing(8);
+    meterLayout->addWidget(new QLabel("Salida"));
+    outputVu = new VuMeter; outputVu->setObjectName("outputVu");
+    outputVu->setFixedSize(200, 16);
+    outputVu->setToolTip("Salida L/R de reproducción y previsualización");
+    meterLayout->addWidget(outputVu);
+    auto *meterAction = controls->addWidget(meterPanel);
+    auto *showMeters = view->addAction("Vúmetros");
+    showMeters->setCheckable(true); showMeters->setChecked(true);
+    connect(showMeters, &QAction::toggled, meterAction, &QAction::setVisible);
     auto *spacer = new QWidget; spacer->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Preferred); controls->addWidget(spacer);
-    auto *dock = new QDockWidget("Niveles", this); dock->setObjectName("levelsDock"); meter = new LevelMeter; dock->setWidget(meter); dock->setFixedWidth(92); addDockWidget(Qt::RightDockWidgetArea, dock);
-    view->addAction(dock->toggleViewAction());
     add(windows, "Cascada", {}, [this] { workspace->cascadeSubWindows(); layoutMinimized(); });
     add(windows, "Mosaico", {}, [this] { workspace->tileSubWindows(); layoutMinimized(); });
     add(windows, "Siguiente", QKeySequence::NextChild, [this] { workspace->activateNextSubWindow(); });
@@ -408,14 +460,14 @@ MainWindow::MainWindow(std::function<Recorder *()> source) : playback(new Playba
     selectionLabel = new QLabel; formatLabel = new QLabel; statusBar()->addWidget(selectionLabel, 1); statusBar()->addPermanentWidget(formatLabel);
     add(options, "&Opciones generales…", QKeySequence("Ctrl+,"), [this] { showOptions(); });
     add(help, "Acerca de ForgeCraft", {}, [this] { auto *about = new AboutDialog(this); about->show(); about->raise(); });
-    connect(workspace, &QMdiArea::subWindowActivated, this, [this] { stop(); refresh(); });
+    connect(workspace, &QMdiArea::subWindowActivated, this, [this] { refresh(); });
     connect(&timer, &QTimer::timeout, this, &MainWindow::tick); timer.setInterval(35);
     setAcceptDrops(true); workspace->viewport()->setAcceptDrops(true); qApp->installEventFilter(this);
-    addDocument(AudioData{});
+    refresh();
 }
 MainWindow::~MainWindow() {
     qApp->removeEventFilter(this);
-    stop();
+    stopPlayback();
     disconnect(workspace, nullptr, this, nullptr);
     for (auto *window : workspace->subWindowList()) {
         auto *d = static_cast<Document *>(window->widget());
@@ -559,8 +611,9 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
     }
     return QMainWindow::eventFilter(watched, event);
 }
-void MainWindow::addDocument(AudioData data, const QString &path) {
+void MainWindow::addDocument(AudioData data, const QString &path, Waveform::PeakData prepared) {
     auto *d = new Document; d->data = std::move(data); d->path = path;
+    d->wave->setPreparedPeaks(std::move(prepared));
     d->setAcceptDrops(true); d->wave->setAcceptDrops(true);
     d->name = path.isEmpty() ? nextUntitledName() : QFileInfo(path).fileName();
     d->contextMenu = [this](const QPoint &global) { showEditMenu(global); };
@@ -575,13 +628,13 @@ void MainWindow::addDocument(AudioData data, const QString &path) {
     window->move(45 + offset * 38, 65 + offset * 48);
     window->canClose = [this, d] {
         if (!confirmClose(d)) return false;
-        stop(); disconnect(&d->undo, nullptr, this, nullptr); disconnect(d->wave, nullptr, this, nullptr); return true;
+        stopPlayback(); disconnect(&d->undo, nullptr, this, nullptr); disconnect(d->wave, nullptr, this, nullptr); return true;
     };
     auto activate = [this, window] { workspace->setActiveSubWindow(window); };
-    d->play = [this, activate] { activate(); play(); }; d->stop = [this] { stop(); };
-    d->record = [this, activate] { activate(); recordAudio(); };
-    d->beginning = [this, d, activate] { activate(); stop(); d->wave->anchor = d->wave->cursor = d->wave->start = 0; d->wave->update(); refresh(); };
-    d->ending = [this, d, activate] { activate(); stop(); d->wave->anchor = d->wave->cursor = d->data.frames(); d->wave->start = qMax(qint64(0), d->data.frames() - d->wave->visibleFrames()); d->wave->update(); refresh(); };
+    d->play = [this, activate] { activate(); play(); }; d->stop = [this, d] { stopDocument(d); };
+    d->record = [this, activate] { activate(); startRecording(); };
+    d->beginning = [this, d, activate] { activate(); stopPlayback(); d->wave->anchor = d->wave->cursor = d->wave->start = 0; d->wave->update(); refresh(); };
+    d->ending = [this, d, activate] { activate(); stopPlayback(); d->wave->anchor = d->wave->cursor = d->data.frames(); d->wave->start = qMax(qint64(0), d->data.frames() - d->wave->visibleFrames()); d->wave->update(); refresh(); };
     // Arrastrar la selección fuera de la onda: sobre otro módulo se inserta en su
     // documento y sobre el área de trabajo abre un documento nuevo con el fragmento.
     // En ambos casos el documento de origen no cambia.
@@ -617,7 +670,7 @@ void MainWindow::addDocument(AudioData data, const QString &path) {
                     AudioData blended = blendFragment(region, fragment, begin - from, sourceGain, targetGain, 0, first, last);
                     return playPreview(blended, 0, blended.frames(), finished);
                 };
-                dialog.stopPreview = [this] { stop(); };
+                dialog.stopPreview = [this] { stopPlayback(); };
                 if (dialog.exec() != QDialog::Accepted) return;
                 insertFragment(target, dropFrame, fragment, true, dialog.sourceGain(), dialog.targetGain(), dialog.tuneFrames());
             } else insertFragment(target, dropFrame, fragment);
@@ -636,11 +689,14 @@ void MainWindow::addDocument(AudioData data, const QString &path) {
     };
     // Al arrastrar, la barra de estado muestra la duración del fragmento y la
     // ventana que hay debajo del puntero.
+    d->wave->dragToggleMode = [this] {
+        if (auto *action = findChild<QAction *>(mixOnDrop ? "dropInsert" : "dropMix")) action->trigger();
+    };
     d->wave->dragStatus = [this, d](qint64 first, qint64 last, const QPoint &global) {
         Waveform *dropWave = nullptr;
         Document *target = documentAt(workspace->viewport(), global, dropWave);
         const QString length = timeText(last - first, d->data.rate);
-        if (target && target != d) statusBar()->showMessage(QString("Selección de %1 · soltar en «%2»").arg(length, target->name), 5000);
+        if (target && target != d) statusBar()->showMessage(QString("Selección de %1 · %2 en «%3» · clic derecho: cambiar modo").arg(length, mixOnDrop ? "mezclar" : "insertar", target->name), 5000);
         else if (target == d) statusBar()->showMessage(QString("Selección de %1 · suelta en otra ventana o en el área de trabajo").arg(length), 5000);
         else statusBar()->showMessage(QString("Selección de %1 · documento nuevo al soltar").arg(length), 5000);
         // Fantasma del fragmento en el documento que hay debajo del puntero.
@@ -648,7 +704,7 @@ void MainWindow::addDocument(AudioData data, const QString &path) {
         if (previewTarget != dragPreviewWave && dragPreviewWave) { dragPreviewWave->clearDropPreview(); dragPreviewWave = nullptr; }
         if (previewTarget) {
             const qint64 at = previewTarget->frameAt(previewTarget->mapFromGlobal(global).x());
-            previewTarget->setDropPreview(d->data.samples.constData(), d->data.channels, first, last, at);
+            previewTarget->setDropPreview(d->data.samples.constData(), d->data.channels, first, last, at, mixOnDrop);
             dragPreviewWave = previewTarget;
         }
     };
@@ -676,15 +732,51 @@ void MainWindow::addDocument(AudioData data, const QString &path) {
     window->show(); workspace->setActiveSubWindow(window); refresh();
 }
 void MainWindow::openFile(const QString &path, bool alwaysNew) {
-    AudioData data; QString error;
-    QApplication::setOverrideCursor(Qt::WaitCursor); bool ok = AudioData::read(path, data, error); QApplication::restoreOverrideCursor();
-    if (!ok) { QMessageBox::warning(this, "Abrir audio", error); return; }
+    struct LoadedAudio { AudioData data; Waveform::PeakData peaks; QString error; bool ok = false; };
+    auto percentage = std::make_shared<std::atomic_int>(0);
+    auto canceled = std::make_shared<std::atomic_bool>(false);
+    const QString name = QFileInfo(path).fileName();
+    QProgressDialog progress("Leyendo y decodificando: " + name, "Cancelar", 0, 100, this);
+    progress.setObjectName("audioLoadProgress"); progress.setWindowTitle("Cargando audio");
+    progress.setMinimumDuration(0); progress.setWindowModality(Qt::ApplicationModal);
+    progress.setAutoClose(false); progress.setAutoReset(false); progress.setMinimumWidth(410); progress.setValue(0);
+    connect(&progress, &QProgressDialog::canceled, this, [canceled] { canceled->store(true); });
+    QTimer progressTimer; progressTimer.setInterval(25);
+    connect(&progressTimer, &QTimer::timeout, &progress, [&] {
+        int value = percentage->load(); progress.setValue(value);
+        progress.setLabelText((value < 85 ? "Leyendo y decodificando: " : "Preparando forma de onda: ") + name);
+    });
+    QFutureWatcher<LoadedAudio> watcher;
+    connect(&watcher, &QFutureWatcher<LoadedAudio>::finished, &progress, &QDialog::accept);
+    watcher.setFuture(QtConcurrent::run([path, percentage, canceled] {
+        LoadedAudio loaded;
+        try {
+            loaded.ok = AudioData::read(path, loaded.data, loaded.error, [percentage, canceled](int value) { percentage->store(value * 85 / 100); return !canceled->load(); });
+            if (loaded.ok && !canceled->load()) {
+                loaded.peaks = Waveform::preparePeaks(loaded.data, [percentage, canceled](int value) { percentage->store(85 + value * 14 / 100); return !canceled->load(); });
+                loaded.ok = !loaded.peaks.canceled;
+            }
+        } catch (const std::bad_alloc &) { loaded.ok = false; loaded.error = "No hay memoria suficiente para cargar este audio."; }
+        return loaded;
+    }));
+    progressTimer.start();
+    if (!watcher.isFinished() && progress.exec() != QDialog::Accepted) canceled->store(true);
+    watcher.waitForFinished(); progressTimer.stop();
+    if (canceled->load()) { statusBar()->showMessage("Carga cancelada: " + name, 4000); return; }
+    auto loaded = watcher.result();
+    if (!loaded.ok) { QMessageBox::warning(this, "Abrir audio", loaded.error); return; }
     auto *empty = current(); bool replace = !alwaysNew && empty && empty->path.isEmpty() && empty->data.frames() == 0 && empty->undo.isClean();
-    auto *emptyWindow = workspace->currentSubWindow(); addDocument(std::move(data), path);
+    auto *emptyWindow = workspace->currentSubWindow(); addDocument(std::move(loaded.data), path, std::move(loaded.peaks));
     if (replace) emptyWindow->close();
+    progress.setValue(100);
 }
 void MainWindow::refresh() {
     auto *d = current(); undoAction->setEnabled(d && d->undo.canUndo()); redoAction->setEnabled(d && d->undo.canRedo());
+    if (followPlaybackAction) {
+        QSignalBlocker block(followPlaybackAction);
+        followPlaybackAction->setEnabled(d != nullptr);
+        followPlaybackAction->setChecked(d && d->wave->followPlayback);
+    }
     if (auto *menu = findChild<QMenu *>("processMenu")) menu->setEnabled(d != nullptr);
     if (auto *menu = findChild<QMenu *>("effectsMenu")) menu->setEnabled(d && d->data.frames() > 0);
     for (auto *action : findChildren<QAction *>()) if (action->objectName().startsWith("dsp.")) action->setEnabled(d && (d->data.frames() > 0 || action->objectName() == "dsp.insert_silence"));
@@ -704,12 +796,8 @@ void MainWindow::refresh() {
     formatLabel->setText(QString("%1 Hz  |  %2  |  %3  |  %4").arg(d->data.rate).arg(depth).arg(d->data.channels == 2 ? "Estéreo" : "Mono").arg(timeText(d->data.frames(), d->data.rate)));
     setWindowTitle(d->name + (d->undo.isClean() ? "" : " *") + " — ForgeCraft");
 }
-void MainWindow::commit(Document *d, const AudioData &after, const QString &name, qint64 a, qint64 b) { stop(); d->undo.push(new AudioEdit(d, after, name, a, b)); refresh(); }
+void MainWindow::commit(Document *d, const AudioData &after, const QString &name, qint64 a, qint64 b) { if (playback->document == d) stopPlayback(); d->undo.push(new AudioEdit(d, after, name, a, b)); refresh(); }
 
-// Coloca un fragmento en otro documento, en la posición indicada (-1: inicio de
-// la selección del destino). Con `mix` se suma al audio existente en lugar de
-// insertarse, como el modo de mezcla de Sound Forge; en ambos casos es una
-// operación deshacible del documento destino.
 void MainWindow::showOptions() {
     QVector<QPair<quint32, QString>> devices;
 #ifdef Q_OS_WIN
@@ -720,21 +808,85 @@ void MainWindow::showOptions() {
             devices.append({quint32(index), QString::fromWCharArray(caps.szPname)});
     }
 #endif
-    OptionsDialog dialog(devices, outputDevice, this);
+    QVector<QPair<quint32, QString>> inputs;
+#ifdef Q_OS_WIN
+    const UINT inputCount = waveInGetNumDevs();
+    for (UINT index = 0; index < inputCount; ++index) {
+        WAVEINCAPSW caps{};
+        if (waveInGetDevCapsW(index, &caps, sizeof(caps)) == MMSYSERR_NOERROR)
+            inputs.append({quint32(index), QString::fromWCharArray(caps.szPname)});
+    }
+#endif
+    OptionsDialog dialog(devices, outputDevice, inputs, inputDevice, this);
     dialog.testDevice = [this](quint32 device) { return playTestTone(device); };
     if (dialog.exec() != QDialog::Accepted) return;
     outputDevice = dialog.outputDevice();
+    inputDevice = dialog.inputDevice();
     QSettings().setValue("audio/outputDevice", outputDevice);
-    statusBar()->showMessage("Dispositivo de salida guardado.", 3000);
+    QSettings().setValue("audio/inputDevice", inputDevice);
+    statusBar()->showMessage("Dispositivos de audio guardados.", 3000);
 }
 bool MainWindow::playTestTone(quint32 device) {
-    stop();
+    stopPlayback();
     const quint32 previous = outputDevice;
     outputDevice = device;
     const AudioData tone = AudioData::tone(0.6, 440.0, 44100, 1);
     const bool started = playPreview(tone, 0, tone.frames(), [] {});
     outputDevice = previous;
     return started;
+}
+// Grabación directa: la captura se acumula en memoria y, al detener, se añade al
+// final del documento enfocado como una operación de deshacer.
+void MainWindow::startRecording() {
+    if (recording) { stopRecording(); return; }
+    Document *target = current();
+    if (!target) {
+        AudioData empty; empty.rate = 44100; empty.channels = 2;
+        addDocument(empty);
+        target = current();
+        if (target) target->name = "Grabación " + QString::number(++recordingNumber);
+    }
+    if (!target) return;
+    const int rate = target->data.rate;
+    const int channels = target->data.channels;
+    if (!recorder) recorder = recordingSource ? recordingSource() : new Recorder(this);
+    recorder->clear(rate, channels);
+    QString error;
+    if (!recorder->start(inputDevice, rate, channels, true, error)) {
+        QMessageBox::warning(this, "Grabar", error.isEmpty() ? QString("No se pudo abrir la entrada de audio.") : error);
+        return;
+    }
+    recording = true;
+    recordTarget = target;
+    recordBlinkTicks = 0;
+    target->setRecordingOn(true);
+    target->setRecordTime(0, rate);
+    if (inputVu) inputVu->reset();
+    timer.start();
+    statusBar()->showMessage(QString("Grabando en «%1» …").arg(target->name), 2000);
+}
+void MainWindow::stopRecording() {
+    if (!recording) return;
+    recording = false;
+    if (recorder) recorder->stop();
+    AudioData take;
+    if (recorder) take = recorder->buffer.audio;
+    if (recorder) recorder->clear(take.rate > 0 ? take.rate : 44100, take.channels > 0 ? take.channels : 2);
+    Document *target = recordTarget;
+    recordTarget = nullptr;
+    if (target) target->setRecordingOn(false);
+    if (inputVu) inputVu->reset();
+    if (!target || !take.frames()) { if (!playback->document) timer.stop(); refresh(); return; }
+    const qint64 end = target->data.frames();
+    auto result = Recording::merge(target->data, take, Recording::Insert, end, end);
+    if (!result.error.isEmpty()) { if (!playback->document) timer.stop(); QMessageBox::warning(this, "Grabar", result.error); refresh(); return; }
+    commit(target, result.audio, "Grabar audio", result.first, result.last);
+    target->wave->anchor = result.first;
+    target->wave->cursor = result.last;
+    target->wave->start = qMax(qint64(0), result.last - target->wave->visibleFrames());
+    target->wave->update();
+    if (!playback->document) timer.stop();
+    statusBar()->showMessage(QString("Grabación de %1 añadida a «%2»").arg(timeText(take.frames(), take.rate), target->name), 4000);
 }
 void MainWindow::addMarker() {
     auto *d = current(); if (!d) return;
@@ -773,6 +925,10 @@ void MainWindow::removeMarkerAt(Document *document, int index) {
     document->wave->update();
     statusBar()->showMessage(QString("Marca «%1» eliminada").arg(name), 4000);
 }
+// Coloca un fragmento en otro documento, en la posición indicada (-1: inicio de
+// la selección del destino). Con `mix` se suma al audio existente en lugar de
+// insertarse, como el modo de mezcla de Sound Forge; en ambos casos es una
+// operación deshacible del documento destino.
 void MainWindow::insertFragment(Document *target, qint64 position, const AudioData &fragment, bool mix, double sourceGain, double targetGain, qint64 tune) {
     if (!target || fragment.samples.isEmpty()) return;
     AudioData next = target->data;
@@ -786,7 +942,7 @@ void MainWindow::insertFragment(Document *target, qint64 position, const AudioDa
         qint64 first = 0, last = 0;
         AudioData blended = blendFragment(next, fragment, at, sourceGain, targetGain, tune, first, last);
         if (last <= first) return;
-        stop();
+        stopPlayback();
         commit(target, blended, "Mezclar selección", first, last);
         if (auto *window = qobject_cast<QMdiSubWindow *>(target->parentWidget())) workspace->setActiveSubWindow(window);
         refresh();
@@ -796,7 +952,7 @@ void MainWindow::insertFragment(Document *target, qint64 position, const AudioDa
     next.shiftMarkers(at, fragment.frames());
     next.samples = next.samples.first(at * next.channels) + fragment.samples + next.samples.mid(at * next.channels);
     for (const auto &marker : fragment.markers) next.markers.append({at + marker.frame, marker.name});
-    stop();
+    stopPlayback();
     commit(target, next, "Insertar selección", at, at + fragment.frames());
     if (auto *window = qobject_cast<QMdiSubWindow *>(target->parentWidget())) workspace->setActiveSubWindow(window);
     refresh();
@@ -879,92 +1035,235 @@ bool MainWindow::confirmClose(Document *d) {
     auto result = QMessageBox::question(this, "Cambios sin guardar", "¿Guardar los cambios de «" + d->name + "»?", QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
     return result == QMessageBox::Discard || (result == QMessageBox::Save && save(d));
 }
-void MainWindow::closeEvent(QCloseEvent *event) { for (auto *window : workspace->subWindowList()) if (!confirmClose(static_cast<Document *>(window->widget()))) { event->ignore(); return; } stop(); event->accept(); }
+void MainWindow::closeEvent(QCloseEvent *event) { if (recording) stopRecording(); for (auto *window : workspace->subWindowList()) if (!confirmClose(static_cast<Document *>(window->widget()))) { event->ignore(); return; } stop(); event->accept(); }
 void MainWindow::tone() {
     bool ok; double frequency = QInputDialog::getDouble(this, "Generar tono", "Frecuencia (Hz):", 440, 20, 20000, 1, &ok); if (!ok) return;
     double seconds = QInputDialog::getDouble(this, "Generar tono", "Duración (segundos):", 5, 0.01, 600, 2, &ok); if (!ok) return;
     addDocument(AudioData{}); auto *d = current(); d->name = "Tono " + QString::number(frequency) + " Hz";
     auto data = AudioData::tone(seconds, frequency); commit(d, data, "Generar tono", 0, data.frames());
 }
-void MainWindow::play(bool loop) {
-    stop(); auto *d = current(); if (!d || !d->data.frames()) return;
+bool MainWindow::playbackIsRunning(Document *document) const {
 #ifdef Q_OS_WIN
-    qint64 a = d->wave->first(), b = d->wave->last();
-    if (a == b) { a = d->wave->cursor; b = d->data.frames(); if (a == b) a = 0; }
-    playback->bytes.resize((b - a) * d->data.channels * 2);
-    for (qint64 i = a * d->data.channels; i < b * d->data.channels; ++i)
-        qToLittleEndian(quint16(qint16(std::lround(d->data.samples[i] * 32767))), playback->bytes.data() + (i - a * d->data.channels) * 2);
-    WAVEFORMATEX format{}; format.wFormatTag = WAVE_FORMAT_PCM; format.nChannels = WORD(d->data.channels); format.nSamplesPerSec = DWORD(d->data.rate);
-    format.wBitsPerSample = 16; format.nBlockAlign = WORD(d->data.channels * 2); format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
-    MMRESULT result = waveOutOpen(&playback->handle, UINT(outputDevice), &format, 0, 0, CALLBACK_NULL);
-    if (result != MMSYSERR_NOERROR) { playback->handle = nullptr; QMessageBox::warning(this, "Reproducción", "No se pudo abrir el dispositivo de audio (código " + QString::number(result) + ")."); return; }
-    playback->header = {}; playback->header.lpData = playback->bytes.data(); playback->header.dwBufferLength = DWORD(playback->bytes.size());
+    return document && playback->document == document && playback->handle && !(playback->header.dwFlags & WHDR_DONE);
+#else
+    Q_UNUSED(document) return false;
+#endif
+}
+void MainWindow::play(bool loop) { playDocument(current(), loop); }
+void MainWindow::playDocument(Document *document, bool loop) {
+    if (!document || !document->data.frames()) return;
+    qint64 first = document->wave->first(), last = document->wave->last();
+    if (first == last) { first = document->wave->cursor; last = document->data.frames(); if (first == last) first = 0; }
+    QString error;
+    if (!startPlayback(document->data, first, last, document, loop, error)) QMessageBox::warning(this, "Reproducción", error);
+}
+
+bool MainWindow::startPlayback(const AudioData &audio, qint64 first, qint64 last, Document *document, bool loop, QString &error, bool forcePcm16) {
+    error.clear();
+    if (audio.channels < 1 || audio.channels > 2 || audio.rate < 8000) { error = "Formato de reproducción no válido."; return false; }
+    first = std::clamp(first, qint64(0), audio.frames()); last = std::clamp(last, first, audio.frames());
+    if (last <= first) { error = "No hay audio para reproducir."; return false; }
+    // Copia compartida: no duplica las muestras y permite soltar/editar la fuente
+    // sin invalidar el búfer que todavía está leyendo el dispositivo.
+    AudioData snapshot = audio;
+    stopPlayback();
+#ifdef Q_OS_WIN
+    playback->source = std::move(snapshot);
+    playback->floatOutput = !forcePcm16;
+    auto open = [&] {
+        WAVEFORMATEX format{};
+        format.wFormatTag = playback->floatOutput ? WAVE_FORMAT_IEEE_FLOAT : WAVE_FORMAT_PCM;
+        format.nChannels = WORD(audio.channels); format.nSamplesPerSec = DWORD(audio.rate);
+        format.wBitsPerSample = playback->floatOutput ? 32 : 16;
+        format.nBlockAlign = WORD(audio.channels * format.wBitsPerSample / 8);
+        format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
+        playback->bytesPerFrame = format.nBlockAlign;
+        return waveOutOpen(&playback->handle, UINT(outputDevice), &format, 0, 0, CALLBACK_NULL);
+    };
+    MMRESULT result = open();
+    if (result == WAVERR_BADFORMAT && playback->floatOutput) {
+        playback->handle = nullptr; playback->floatOutput = false; result = open();
+    }
+    if (result != MMSYSERR_NOERROR) { playback->handle = nullptr; stopPlayback(); error = "No se pudo abrir el dispositivo de audio (código " + QString::number(result) + ")."; return false; }
+    const qint64 byteCount = (last - first) * playback->bytesPerFrame;
+    if (quint64(byteCount) > std::numeric_limits<DWORD>::max()) { stopPlayback(); error = "El tramo es demasiado largo para la salida de audio."; return false; }
+    playback->header = {};
+    if (playback->floatOutput) {
+        // El motor trabaja en float32: waveOut puede leerlo directamente, sin
+        // recorrer y convertir una canción completa antes de arrancar Play.
+        playback->header.lpData = const_cast<char *>(reinterpret_cast<const char *>(playback->source.samples.constData() + first * audio.channels));
+    } else {
+        try { playback->bytes.resize(byteCount); }
+        catch (const std::bad_alloc &) { stopPlayback(); error = "No hay memoria suficiente para reproducir este audio."; return false; }
+        const float *input = playback->source.samples.constData() + first * audio.channels;
+        char *output = playback->bytes.data();
+        for (qint64 i = 0; i < (last - first) * audio.channels; ++i)
+            qToLittleEndian(quint16(qint16(std::lround(std::clamp(double(input[i]), -1.0, 1.0) * 32767))), output + i * 2);
+        playback->header.lpData = playback->bytes.data();
+    }
+    playback->header.dwBufferLength = DWORD(byteCount);
     result = waveOutPrepareHeader(playback->handle, &playback->header, sizeof(WAVEHDR));
     if (result == MMSYSERR_NOERROR) result = waveOutWrite(playback->handle, &playback->header, sizeof(WAVEHDR));
-    if (result != MMSYSERR_NOERROR) { stop(); QMessageBox::warning(this, "Reproducción", "No se pudo enviar el audio al dispositivo."); return; }
-    playback->document = d; playback->begin = a; playback->end = b; playback->loop = loop; timer.start();
+    if (result != MMSYSERR_NOERROR) { stopPlayback(); error = "No se pudo enviar el audio al dispositivo (código " + QString::number(result) + ")."; return false; }
+    playback->document = document; playback->begin = first; playback->end = last; playback->loop = loop;
+    playback->selectionAnchor = document ? document->wave->anchor : 0;
+    playback->selectionCursor = document ? document->wave->cursor : 0;
+    timer.start(); return true;
+#else
+    Q_UNUSED(document) Q_UNUSED(loop) Q_UNUSED(forcePcm16)
+    error = "La reproducción requiere Windows."; return false;
 #endif
 }
 
-// Reproduce un fragmento sin documento asociado: lo usan Preview y Bypass de los
-// diálogos de proceso. El audio se copia al búfer de reproducción, así que la
-// fuente puede liberarse al volver.
 bool MainWindow::playPreview(const AudioData &audio, qint64 first, qint64 last, std::function<void()> finished) {
-    stop();
-#ifdef Q_OS_WIN
-    first = std::clamp(first, qint64(0), audio.frames());
-    last = std::clamp(last, first, audio.frames());
-    if (last <= first || audio.samples.isEmpty()) return false;
-    playback->bytes.resize((last - first) * audio.channels * 2);
-    for (qint64 i = first * audio.channels; i < last * audio.channels; ++i)
-        qToLittleEndian(quint16(qint16(std::lround(audio.samples[i] * 32767))), playback->bytes.data() + (i - first * audio.channels) * 2);
-    WAVEFORMATEX format{}; format.wFormatTag = WAVE_FORMAT_PCM; format.nChannels = WORD(audio.channels); format.nSamplesPerSec = DWORD(audio.rate);
-    format.wBitsPerSample = 16; format.nBlockAlign = WORD(audio.channels * 2); format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
-    MMRESULT result = waveOutOpen(&playback->handle, UINT(outputDevice), &format, 0, 0, CALLBACK_NULL);
-    if (result != MMSYSERR_NOERROR) { playback->handle = nullptr; QMessageBox::warning(this, "Previsualización", "No se pudo abrir el dispositivo de audio (código " + QString::number(result) + ")."); return false; }
-    playback->header = {}; playback->header.lpData = playback->bytes.data(); playback->header.dwBufferLength = DWORD(playback->bytes.size());
-    result = waveOutPrepareHeader(playback->handle, &playback->header, sizeof(WAVEHDR));
-    if (result == MMSYSERR_NOERROR) result = waveOutWrite(playback->handle, &playback->header, sizeof(WAVEHDR));
-    if (result != MMSYSERR_NOERROR) { stop(); QMessageBox::warning(this, "Previsualización", "No se pudo enviar el audio al dispositivo."); return false; }
-    playback->document = nullptr; playback->begin = first; playback->end = last; playback->loop = false;
-    previewEnded = std::move(finished);
-    timer.start();
-    return true;
-#else
-    Q_UNUSED(first); Q_UNUSED(last); Q_UNUSED(finished);
-    return false;
-#endif
+    QString error;
+    if (!startPlayback(audio, first, last, nullptr, false, error)) {
+        if (!audio.samples.isEmpty()) QMessageBox::warning(this, "Previsualización", error);
+        return false;
+    }
+    previewEnded = std::move(finished); return true;
 }
+// Los controles de un módulo solo detienen el transporte de ese documento,
+// aunque otro módulo esté enfocado, reproduciendo o grabando.
+void MainWindow::stopDocument(Document *document) {
+    if (!document) return;
+    if (recording && recordTarget == document) stopRecording();
+    if (playback->document == document) stopPlayback();
+}
+// Parada completa interna para el cierre de la aplicación. Los botones y
+// atajos del transporte inferior se dirigen al documento enfocado.
 void MainWindow::stop() {
-    timer.stop();
+    if (recording) stopRecording();
+    stopPlayback();
+}
+void MainWindow::stopPlayback() {
+    // Si hay una grabación en curso, el temporizador sigue vivo para su vúmetro.
+    if (!recording) timer.stop();
     previewEnded = nullptr;
 #ifdef Q_OS_WIN
     if (playback->handle) { waveOutReset(playback->handle); waveOutUnprepareHeader(playback->handle, &playback->header, sizeof(WAVEHDR)); waveOutClose(playback->handle); playback->handle = nullptr; }
 #endif
-    if (playback->document) { playback->document->wave->playhead = -1; playback->document->wave->update(); playback->document = nullptr; }
-    playback->bytes.clear(); meter->setLevels(0, 0); refresh();
+    if (auto *playing = playback->document) {
+        playing->wave->playhead = -1; playing->wave->update();
+        playback->document = nullptr;
+    }
+    if (outputVu) outputVu->reset();
+    playback->bytes.clear();
+    playback->source = AudioData{}; playback->bytesPerFrame = 0;
+#ifdef Q_OS_WIN
+    playback->header = {};
+#endif
+    refresh();
 }
 void MainWindow::tick() {
 #ifdef Q_OS_WIN
+    // Grabación y reproducción son independientes: se puede grabar en un módulo
+    // mientras suena otro.
+    if (recording) {
+        const double left = recorder ? recorder->buffer.peaks[0] : 0.0;
+        const double right = recorder && recorder->buffer.audio.channels == 1 ? left : (recorder ? recorder->buffer.peaks[1] : 0.0);
+        const qint64 frames = recorder ? recorder->buffer.audio.frames() : 0;
+        const int rate = recorder && recorder->buffer.audio.rate > 0 ? recorder->buffer.audio.rate : 44100;
+        if (recordTarget) {
+            recordTarget->setRecordTime(frames, rate);
+            // Parpadeo del botón de grabación en un rojo más oscuro (~350 ms).
+            if (++recordBlinkTicks % 10 == 0) recordTarget->toggleRecordBlink();
+        }
+        if (inputVu) inputVu->setLevels(left, right);
+        statusBar()->showMessage(QString("Grabando en «%1» · %2").arg(recordTarget ? recordTarget->name : QString(), timeText(frames, rate)));
+    }
+    if (outputVu && playback->handle && !(playback->header.dwFlags & WHDR_DONE)) {
+        MMTIME position{}; position.wType = TIME_SAMPLES;
+        if (waveOutGetPosition(playback->handle, &position, sizeof(position)) == MMSYSERR_NOERROR) {
+            const auto &audio = playback->source;
+            const qint64 offset = position.wType == TIME_SAMPLES ? position.u.sample :
+                position.wType == TIME_BYTES ? position.u.cb / qMax(1, playback->bytesPerFrame) :
+                qint64(position.u.ms) * audio.rate / 1000;
+            const qint64 frame = std::clamp(playback->begin + offset, qint64(0), audio.frames());
+            double peaks[2] = {0, 0};
+            for (qint64 f = frame; f < qMin(audio.frames(), frame + 1024); ++f)
+                for (int c = 0; c < audio.channels; ++c)
+                    peaks[c] = std::max(peaks[c], double(std::abs(audio.samples[f * audio.channels + c])));
+            outputVu->setLevels(peaks[0], audio.channels == 1 ? peaks[0] : peaks[1]);
+        }
+    }
     auto *d = playback->document;
     if (!d) {
-        // Vista previa de un proceso: solo hay que detectar el final.
-        if (playback->header.dwFlags & WHDR_DONE) {
+        // Las previsualizaciones también alimentan el vúmetro de salida.
+        if (playback->handle && (playback->header.dwFlags & WHDR_DONE)) {
             auto callback = previewEnded;
-            stop();
+            stopPlayback();
             if (callback) callback();
         }
         return;
     }
-    if (playback->header.dwFlags & WHDR_DONE) { bool loop = playback->loop; stop(); if (loop) play(true); return; }
+    if (playback->header.dwFlags & WHDR_DONE) { bool loop = playback->loop; stopPlayback(); if (loop) playDocument(d, true); return; }
     MMTIME t{}; t.wType = TIME_SAMPLES;
     if (waveOutGetPosition(playback->handle, &t, sizeof(t)) != MMSYSERR_NOERROR) return;
-    qint64 offset = t.wType == TIME_SAMPLES ? t.u.sample : t.wType == TIME_BYTES ? t.u.cb / (d->data.channels * 2) : qint64(t.u.ms) * d->data.rate / 1000;
-    qint64 f = qMin(playback->begin + offset, playback->end); d->wave->playhead = f;
-    double peaks[2] = {0, 0}; for (qint64 frame = f; frame < qMin(d->data.frames(), f + 1024); ++frame) for (int c = 0; c < d->data.channels; ++c) peaks[c] = std::max(peaks[c], double(std::abs(d->data.samples[frame * d->data.channels + c])));
-    meter->setLevels(peaks[0], d->data.channels == 1 ? peaks[0] : peaks[1]);
-    if (f > d->wave->start + d->wave->visibleFrames()) d->wave->start = f;
-    d->wave->update(); refresh();
+    qint64 offset = t.wType == TIME_SAMPLES ? t.u.sample : t.wType == TIME_BYTES ? t.u.cb / qMax(1, playback->bytesPerFrame) : qint64(t.u.ms) * d->data.rate / 1000;
+    qint64 f = qMin(playback->begin + offset, playback->end); d->wave->setPlayhead(f);
+    if (!recording) refresh();
 #endif
 }
 
+int playbackTests() {
+    int failures = 0;
+    auto check = [&](bool ok, const char *message) { std::printf("%s playback %s\n", ok ? "PASS" : "FAIL", message); std::fflush(stdout); if (!ok) ++failures; };
+#ifdef Q_OS_WIN
+    if (!waveOutGetNumDevs()) { std::printf("SKIP playback native tests: no output device\n"); return 0; }
+    MainWindow window; window.show(); window.outputDevice = WAVE_MAPPER;
+    window.addDocument(AudioData{});
+    auto *first = window.current();
+    first->data = AudioData{}; first->data.samples.fill(0, 4410 * 2); first->wave->invalidateCache();
+    const float *original = first->data.samples.constData(); QString error;
+    if (!window.startPlayback(first->data, 0, first->data.frames(), first, false, error)) {
+        std::printf("SKIP playback native tests: %s\n", error.toUtf8().constData()); return 0;
+    }
+    window.timer.stop();
+    check(window.playbackIsRunning(first), "first start queues silent audio");
+    window.tick();
+    check(first->data.samples.constData() == original && window.playback->source.samples.constData() == original, "start and meter updates keep source shared without detaching audio");
+    auto waitForEnd = [&] {
+        QElapsedTimer timeout; timeout.start();
+        while (!(window.playback->header.dwFlags & WHDR_DONE) && timeout.elapsed() < 3000) { QEventLoop loop; QTimer::singleShot(10, &loop, &QEventLoop::quit); loop.exec(); }
+        return bool(window.playback->header.dwFlags & WHDR_DONE);
+    };
+    check(waitForEnd(), "native driver reports buffer completion");
+    check(window.playback->document == first && !window.playbackIsRunning(first), "finished buffer is not mistaken for active playback before timer cleanup");
+    for (auto *action : window.findChildren<QAction *>()) if (action->text() == "Reproducir / detener") { action->trigger(); break; }
+    check(window.playbackIsRunning(first), "one Play press restarts after natural end with delayed cleanup");
+    window.stopPlayback();
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        bool started = window.startPlayback(first->data, 0, first->data.frames(), first, false, error);
+        check(started && window.playbackIsRunning(first), "repeat first-click start succeeds"); window.stopPlayback();
+    }
+    bool fallback = window.startPlayback(first->data, 0, first->data.frames(), first, false, error, true);
+    check(fallback && !window.playback->floatOutput && window.playback->bytes.size() == first->data.samples.size() * 2, "PCM16 compatibility path queues the correct byte count"); window.stopPlayback();
+    window.addDocument(AudioData{}); auto *secondWindow = window.workspace->currentSubWindow();
+    auto *second = window.current();
+    window.startPlayback(first->data, 0, first->data.frames(), first, false, error);
+    for (auto *action : window.findChildren<QAction *>()) if (action->text() == "Reproducir / detener") { action->trigger(); break; }
+    check(window.playbackIsRunning(first) && second->data.frames() == 0, "Play on empty focused MDI preserves other playback");
+    for (auto *action : window.findChildren<QAction *>()) if (action->text() == "Detener") { action->trigger(); break; }
+    check(window.playbackIsRunning(first), "Stop on another focused MDI preserves playback"); window.stopPlayback();
+    window.startPlayback(first->data, 0, first->data.frames(), first, true, error); window.timer.stop();
+    check(waitForEnd(), "loop fixture reaches its end"); window.workspace->setActiveSubWindow(secondWindow); window.tick();
+    check(window.playback->document == first && window.playbackIsRunning(first) && window.current() == second, "loop restarts its owner after focus changes"); window.stopPlayback();
+    int callbacks = 0;
+    window.recording = true;
+    window.startPlayback(first->data, 0, first->data.frames(), nullptr, false, error);
+    window.previewEnded = [&] { ++callbacks; }; window.timer.stop();
+    check(waitForEnd(), "preview fixture reaches completion"); window.tick(); window.tick();
+    check(callbacks == 1 && !window.playback->handle, "preview completion is delivered once while recording");
+    window.recording = false; window.stopPlayback();
+    AudioData longAudio; longAudio.samples.fill(0, 44100 * 2 * 120);
+    QElapsedTimer startup; startup.start(); bool started = window.startPlayback(longAudio, 0, longAudio.frames(), first, false, error);
+    std::printf("BENCH playback 120s startup_ms=%.2f format=%s (silent output probe)\n", startup.nsecsElapsed() / 1000000., window.playback->floatOutput ? "float32" : "PCM16");
+    if (started && window.playback->floatOutput) check(window.playback->bytes.isEmpty() && window.playback->header.lpData == reinterpret_cast<const char *>(longAudio.samples.constData()), "long audio starts without a full-track PCM conversion or copy");
+    else check(started, "long audio can start on compatibility output");
+    window.stopPlayback(); window.close();
+#else
+    std::printf("SKIP playback native tests: Windows required\n");
+#endif
+    return failures;
+}

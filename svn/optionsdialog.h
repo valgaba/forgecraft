@@ -12,12 +12,13 @@ class QPushButton;
 class OptionsDialog : public QDialog {
     Q_OBJECT
 public:
-    OptionsDialog(const QVector<QPair<quint32, QString>> &devices, quint32 current, QWidget *parent = nullptr);
+    OptionsDialog(const QVector<QPair<quint32, QString>> &outputs, quint32 currentOutput, const QVector<QPair<quint32, QString>> &inputs, quint32 currentInput, QWidget *parent = nullptr);
     quint32 outputDevice() const;
+    quint32 inputDevice() const;
     // Reproduce un tono corto en el dispositivo indicado. Devuelve false si no
     // se pudo abrir.
     std::function<bool(quint32)> testDevice;
 private:
-    QComboBox *deviceBox;
+    QComboBox *deviceBox, *inputBox;
     QPushButton *testButton;
 };
