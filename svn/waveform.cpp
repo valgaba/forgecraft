@@ -53,9 +53,9 @@ void Waveform::resetView() { zoom = 1; start = 0; anchor = cursor = 0; update();
 void Waveform::setPlayhead(qint64 frame) {
     playhead = frame;
     if (followPlayback && audio && frame >= 0) {
-        const qint64 visible = visibleFrames();
-        if (frame < start || frame >= start + visible)
-            start = std::clamp(frame, qint64(0), qMax(qint64(0), audio->frames() - visible));
+        // La línea permanece centrada en cada avance; al principio y al final
+        // queda espacio vacío fuera del audio, en lugar de desplazar la línea.
+        start = frame - visibleFrames() / 2;
     }
     update();
 }
@@ -77,8 +77,10 @@ void Waveform::paintEvent(QPaintEvent *) {
     if (!empty) ensurePeaks();
     for (int i = 0; i <= 10; ++i) {
         int x = left + (right - left) * i / 10;
+        const qint64 rulerFrame = start + visibleFrames() * i / 10;
+        if (!empty && (rulerFrame < 0 || rulerFrame > audio->frames())) continue;
         p.setPen(Theme::TextDim); p.drawLine(x, 20, x, ruler - 1);
-        qint64 ms = empty ? i * 3 : (start + visibleFrames() * i / 10) * 1000 / audio->rate;
+        qint64 ms = empty ? i * 3 : rulerFrame * 1000 / audio->rate;
         QString text = QString("%1:%2:%3,%4").arg(ms / 3600000, 2, 10, QChar('0')).arg(ms / 60000 % 60, 2, 10, QChar('0')).arg(ms / 1000 % 60, 2, 10, QChar('0')).arg(ms % 1000, 3, 10, QChar('0'));
         if (x + 78 < right) p.drawText(x + 2, 13, text);
         for (int j = 1; j < 5; ++j) { int tick = x + (right - left) * j / 50; p.drawLine(tick, 24, tick, ruler - 1); }
@@ -92,6 +94,8 @@ void Waveform::paintEvent(QPaintEvent *) {
         p.setPen(Theme::TextDim); p.drawText(4, top + int(band * .26), "−6,0"); p.drawText(5, mid + 3, "−Inf."); p.drawText(4, top + int(band * .77), "−6,0");
         if (empty) continue;
         for (int x = left; x <= right; ++x) {
+            const qint64 timelineFrame = start + qint64(double(x - left) / qMax(1, width() - left - 2) * visibleFrames());
+            if (timelineFrame < 0 || timelineFrame >= audio->frames()) continue;
             qint64 a = at(x), b = qMin(audio->frames(), qMax(a + 1, at(x + 1)));
             float lo = 0, hi = 0;
             peaks(a, b, c, lo, hi);

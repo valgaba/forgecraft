@@ -138,7 +138,7 @@ static void applyTheme(QApplication &app) {
 }
 
 int main(int argc, char **argv) {
-    QApplication app(argc, argv); app.setApplicationName("ForgeCraft"); app.setApplicationVersion("0.1.2"); app.setOrganizationName("ForgeCraft");
+    QApplication app(argc, argv); app.setApplicationName("ForgeCraft"); app.setApplicationVersion("0.1.3"); app.setOrganizationName("ForgeCraft");
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/ForgeCraftAppIcon.png")));
     applyTheme(app);
     if (app.arguments().contains("--benchmark-audio")) return audioBenchmark();
@@ -397,7 +397,12 @@ int main(int argc, char **argv) {
             doc->wave->zoom = 4; doc->wave->start = 0;
             const qint64 viewFrames = doc->wave->visibleFrames();
             doc->wave->setPlayhead(viewFrames);
-            bool followed = doc->wave->start == viewFrames && followAction && followAction->isChecked();
+            const int centeredX = doc->wave->pixelAt(viewFrames);
+            const int waveCenter = Theme::GutterWidth + (doc->wave->width() - Theme::GutterWidth - 2) / 2;
+            bool followed = qAbs(centeredX - waveCenter) <= 1 && followAction && followAction->isChecked();
+            doc->wave->setPlayhead(viewFrames + 100);
+            followed &= doc->wave->start == viewFrames + 100 - viewFrames / 2
+                && doc->wave->pixelAt(viewFrames + 100) == centeredX;
             if (followAction) followAction->trigger();
             const qint64 fixedStart = doc->wave->start;
             doc->wave->setPlayhead(doc->data.frames());
@@ -411,11 +416,12 @@ int main(int argc, char **argv) {
             independentFollow &= !followAction->isChecked() && !doc->wave->followPlayback && !otherDoc->wave->followPlayback;
             doc->followButton->click();
             followed &= followAction->isChecked() && doc->wave->followPlayback
-                && doc->wave->start == doc->data.frames() - viewFrames;
+                && doc->wave->start == doc->data.frames() - viewFrames / 2
+                && doc->wave->pixelAt(doc->data.frames()) == centeredX;
             doc->wave->setPlayhead(0);
-            followed &= doc->wave->start == 0;
+            followed &= doc->wave->start == -viewFrames / 2 && doc->wave->pixelAt(0) == centeredX;
             ok &= followed && fixedView && independentFollow;
-            std::printf("%s UI playback follow toggles per MDI, synchronizes both buttons and restores an offscreen playhead without overscrolling\n", (followed && fixedView && independentFollow) ? "PASS" : "FAIL");
+            std::printf("%s UI playback follow keeps the red line centered while scrolling, including both audio edges, and toggles per MDI\n", (followed && fixedView && independentFollow) ? "PASS" : "FAIL");
             doc->wave->zoom = previousZoom; doc->wave->start = previousStart;
             doc->wave->setPlayhead(-1); otherDoc->followButton->setChecked(true);
             auto *dropMixAction = window.findChild<QAction *>("dropMix");
@@ -451,6 +457,24 @@ int main(int argc, char **argv) {
             const bool previewsOk = lineOnly && clearedLine && ghostPixels > 1000;
             ok &= previewsOk;
             std::printf("%s UI insert preview is a full-height line, mix preview is a ghost, and clearing removes the line\n", previewsOk ? "PASS" : "FAIL");
+            // El centrado deja márgenes vacíos; no repite muestras fuera del audio.
+            AudioData centerAudio; centerAudio.samples.fill(.5f, 2000);
+            Waveform centerPreview; centerPreview.audio = &centerAudio; centerPreview.resize(640, 240);
+            auto hasWaveAt = [&](const QImage &image, int x) {
+                for (int y = Theme::RulerHeight + 1; y < image.height() - 2; ++y)
+                    if (image.pixelColor(x, y) == Theme::Accent) return true;
+                return false;
+            };
+            centerPreview.setPlayhead(0);
+            const QImage startCentered = centerPreview.grab().toImage();
+            centerPreview.setPlayhead(centerAudio.frames());
+            const QImage endCentered = centerPreview.grab().toImage();
+            const bool blankMargins = !hasWaveAt(startCentered, 100) && hasWaveAt(startCentered, 540)
+                && hasWaveAt(endCentered, 100) && !hasWaveAt(endCentered, 540);
+            startCentered.save(QApplication::applicationDirPath() + "/../build/follow-centered-start.png");
+            endCentered.save(QApplication::applicationDirPath() + "/../build/follow-centered-end.png");
+            ok &= blankMargins;
+            std::printf("%s UI centered playback renders empty margins outside the audio\n", blankMargins ? "PASS" : "FAIL");
             blank1->setGeometry(700, 60, 700, 210); blank1->raise(); app.processEvents();
             auto *receiver = static_cast<Document *>(blank1->widget());
             const qint64 receiverBefore = receiver->data.frames();

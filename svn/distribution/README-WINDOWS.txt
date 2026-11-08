@@ -1,8 +1,8 @@
-ForgeCraft 0.1.2 — Windows de 64 bits
+ForgeCraft 0.1.3 — Windows de 64 bits
 =====================================
 
-1. Descomprime forgecraft_0_1_2.zip.
-2. Ejecuta forgecraft_0_1_2\forgecraft.exe.
+1. Descomprime forgecraft_0_1_3.zip.
+2. Ejecuta forgecraft_0_1_3\forgecraft.exe.
 
 No requiere instalación ni permisos de administrador. Se puede mover la carpeta completa a otra ubicación o a una unidad extraíble, pero hay que mantener juntos el ejecutable, las DLL, las carpetas de plugins y la hoja forgecraft.qss.
 

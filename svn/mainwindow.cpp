@@ -244,7 +244,7 @@ Document::Document(QWidget *parent) : QWidget(parent) {
     followButton->setIcon(Theme::icon("follow-playhead"));
     followButton->setIconSize(QSize(18, 18)); followButton->setFixedSize(30, 28);
     followButton->setCheckable(true); followButton->setChecked(wave->followPlayback);
-    followButton->setToolTip("Seguir reproducción: mantener visible la línea roja mediante desplazamiento automático");
+    followButton->setToolTip("Seguir reproducción: fijar la línea roja en el centro y desplazar la forma de onda");
     row->addWidget(followButton);
     connect(followButton, &QToolButton::toggled, this, [this](bool follow) {
         wave->followPlayback = follow;
@@ -425,7 +425,7 @@ MainWindow::MainWindow(std::function<Recorder *()> source) : playback(new Playba
     followPlaybackAction = new QAction(Theme::icon("follow-playhead"), "Seguir reproducción", this);
     followPlaybackAction->setObjectName("followPlaybackAction");
     followPlaybackAction->setCheckable(true);
-    followPlaybackAction->setToolTip("Seguir reproducción del MDI enfocado: mantener visible la línea roja mediante desplazamiento automático");
+    followPlaybackAction->setToolTip("Seguir reproducción del MDI enfocado: fijar la línea roja en el centro y desplazar la forma de onda");
     controls->addAction(followPlaybackAction);
     connect(followPlaybackAction, &QAction::triggered, this, [this](bool follow) {
         if (auto *d = current()) d->followButton->setChecked(follow);
@@ -463,6 +463,7 @@ MainWindow::MainWindow(std::function<Recorder *()> source) : playback(new Playba
     connect(workspace, &QMdiArea::subWindowActivated, this, [this] { refresh(); });
     connect(&timer, &QTimer::timeout, this, &MainWindow::tick); timer.setInterval(35);
     setAcceptDrops(true); workspace->viewport()->setAcceptDrops(true); qApp->installEventFilter(this);
+    this->showMaximized();
     refresh();
 }
 MainWindow::~MainWindow() {
@@ -628,7 +629,8 @@ void MainWindow::addDocument(AudioData data, const QString &path, Waveform::Peak
     window->move(45 + offset * 38, 65 + offset * 48);
     window->canClose = [this, d] {
         if (!confirmClose(d)) return false;
-        stopPlayback(); disconnect(&d->undo, nullptr, this, nullptr); disconnect(d->wave, nullptr, this, nullptr); return true;
+        if (playback->document == d) stopPlayback();
+        disconnect(&d->undo, nullptr, this, nullptr); disconnect(d->wave, nullptr, this, nullptr); return true;
     };
     auto activate = [this, window] { workspace->setActiveSubWindow(window); };
     d->play = [this, activate] { activate(); play(); }; d->stop = [this, d] { stopDocument(d); };
@@ -1261,7 +1263,32 @@ int playbackTests() {
     std::printf("BENCH playback 120s startup_ms=%.2f format=%s (silent output probe)\n", startup.nsecsElapsed() / 1000000., window.playback->floatOutput ? "float32" : "PCM16");
     if (started && window.playback->floatOutput) check(window.playback->bytes.isEmpty() && window.playback->header.lpData == reinterpret_cast<const char *>(longAudio.samples.constData()), "long audio starts without a full-track PCM conversion or copy");
     else check(started, "long audio can start on compatibility output");
-    window.stopPlayback(); window.close();
+    window.stopPlayback();
+    // Cerrar un MDI ajeno no debe reiniciar ni detener el dispositivo de salida.
+    first->data.samples.fill(0, 44100 * 2 * 3); first->wave->invalidateCache();
+    const bool closeStarted = window.startPlayback(first->data, 0, first->data.frames(), first, false, error);
+    window.timer.stop();
+    const auto playingHandle = window.playback->handle;
+    QPointer<Document> closedSecond = second;
+    window.workspace->setActiveSubWindow(secondWindow);
+    const bool closedFocused = secondWindow->close();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    check(closeStarted && closedFocused && closedSecond.isNull() && window.playback->handle == playingHandle
+        && window.playbackIsRunning(first), "closing another focused MDI preserves the playing document and output device");
+    window.addDocument(AudioData{});
+    auto *thirdWindow = window.workspace->currentSubWindow();
+    auto *firstWindow = qobject_cast<QMdiSubWindow *>(first->parentWidget());
+    window.workspace->setActiveSubWindow(firstWindow);
+    const bool closedBackground = thirdWindow->close();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    check(closedBackground && window.playback->handle == playingHandle && window.playbackIsRunning(first),
+        "closing another background MDI preserves playback");
+    QPointer<Document> closedOwner = first;
+    const bool closedPlaying = firstWindow->close();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    check(closedPlaying && closedOwner.isNull() && !window.playback->handle && !window.playback->document,
+        "closing the playing MDI stops output and releases its document");
+    window.close();
 #else
     std::printf("SKIP playback native tests: Windows required\n");
 #endif

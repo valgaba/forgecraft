@@ -1,4 +1,4 @@
-# ForgeCraft 0.1.2
+# ForgeCraft 0.1.3
 
 Editor de audio para Windows, inspirado en la estética y el flujo de los editores clásicos como Sound Forge 4.5. Implementación propia en **Qt Widgets 6.7.0, C++17 y MinGW 11.2 de 64 bits**, el mismo kit configurado en Radit.
 
@@ -17,7 +17,7 @@ Editor de audio para Windows, inspirado en la estética y el flujo de los editor
 
 ## Descarga
 
-[Descargar ForgeCraft 0.1.2 para Windows de 64 bits](https://github.com/valgaba/forgecraft/releases/download/forgecraft-0.1.2/forgecraft_0_1_2.zip). Descomprimir `forgecraft_0_1_2.zip` y ejecutar `forgecraft_0_1_2\forgecraft.exe`. No requiere instalación. El paquete incluye las DLL de Qt, los plugins, los códecs MP3, la hoja de estilo y las licencias; los detalles están en `README.txt` del propio paquete. La [página de la versión](https://github.com/valgaba/forgecraft/releases/tag/forgecraft-0.1.2) incluye la suma SHA256.
+[Descargar ForgeCraft 0.1.3 para Windows de 64 bits](https://github.com/valgaba/forgecraft/releases/download/forgecraft-0.1.3/forgecraft_0_1_3.zip). Descomprimir `forgecraft_0_1_3.zip` y ejecutar `forgecraft_0_1_3\forgecraft.exe`. No requiere instalación. El paquete incluye las DLL de Qt, los plugins, los códecs MP3, la hoja de estilo y las licencias; los detalles están en `README.txt` del propio paquete. La [página de la versión](https://github.com/valgaba/forgecraft/releases/tag/forgecraft-0.1.3) incluye la suma SHA256.
 
 ## Estructura
 
@@ -70,7 +70,7 @@ Los valores de la hoja están ampliados respecto a Radit (barra de desplazamient
 ## Funciones actuales
 
 - El área de trabajo empieza vacía, sin un documento MDI predeterminado. Los documentos se crean con Nuevo, Abrir o al comenzar una grabación.
-- **Seguir reproducción**: botón activable junto a Play en cada MDI y en el transporte inferior. Activado por defecto, desplaza la vista para mantener visible la línea roja. Desactivado, la vista permanece fija y permite explorar el audio mientras sigue sonando. Cada MDI conserva su estado; el botón inferior controla el enfocado. Al reactivarlo, la vista vuelve a la posición actual de reproducción.
+- **Seguir reproducción**: botón activable junto a Play en cada MDI y en el transporte inferior. Activado por defecto, fija la línea roja en el centro y desplaza la forma de onda por debajo de ella continuamente. En los extremos queda espacio vacío fuera del audio para conservar el centrado. Desactivado, la vista permanece fija y permite explorar el audio mientras sigue sonando. Cada MDI conserva su estado; el botón inferior controla el enfocado. Al reactivarlo, la vista se centra en la posición actual de reproducción.
 
 - Ventanas de audio MDI superpuestas, con cascada y mosaico, con módulos de marco propio (barra de título con minimizar y cerrar, y bordes redimensionables).
 - Interfaz oscura con la identidad visual de Radit: superficies planas, acento `#80A4AE` y formas de onda sobre lienzo oscuro con reglas de tiempo por documento.
@@ -165,10 +165,10 @@ Start-Process .\out\bin\forgecraft.exe -ArgumentList '--smoke-test' -Wait
 Con el ejecutable ya desplegado:
 
 ```powershell
-.\package.ps1 -Version 0.1.2
+.\package.ps1 -Version 0.1.3
 ```
 
-Genera `out/packages/forgecraft_0_1_2.zip` con el ejecutable, la hoja de estilo, las DLL, los plugins (`platforms`, `iconengines`, `imageformats`), los códecs MP3, las licencias y los textos de instalación, y escribe `out/packages/SHA256SUMS.txt`. Ese zip y el archivo de sumas son los dos assets que se adjuntan a la Release; los binarios no se guardan en el repositorio.
+Genera `out/packages/forgecraft_0_1_3.zip` con el ejecutable, la hoja de estilo, las DLL, los plugins (`platforms`, `iconengines`, `imageformats`), los códecs MP3, las licencias y los textos de instalación, y escribe `out/packages/SHA256SUMS.txt`. Ese zip y el archivo de sumas son los dos assets que se adjuntan a la Release; los binarios no se guardan en el repositorio.
 
 ## Alcance de esta versión
 
