@@ -1,4 +1,5 @@
 #include "dsp.h"
+#include "normalization.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -127,7 +128,14 @@ const QVector<Dsp::Operation> &Dsp::operations() {
         add("invert", "Proceso/Invert/Flip", "Invert polarity", "Invierte la polaridad de las muestras seleccionadas.");
         add("swap", "Proceso/Invert/Flip", "Flip channels", "Intercambia los canales izquierdo y derecho de la selección estéreo.");
         add("mute", "Proceso", "Mute", "Silencia la selección.");
-        add("normalize", "Proceso", "Normalize…", "Normaliza por pico, con una ganancia común para ambos canales.", {number("target", "Pico objetivo (dBFS)", -.1, -60, 0)});
+        add("normalize", "Proceso", "Normalize…", "Normalización por pico o RMS con análisis y control de clipping.", {
+            number("target", "Nivel objetivo (dBFS)", -.1, -60, 0),
+            choice("mode", "Normalizar usando", {"Pico", "Potencia RMS media"}),
+            number("ignore", "Ignorar por debajo (dBFS)", -45, -96, 0),
+            number("attack", "Ataque de análisis (ms)", 200, 1, 500, 0),
+            number("release", "Relajación de análisis (ms)", 200, 1, 500, 0),
+            choice("contour", "Contorno perceptual aproximado", {"No", "Sí"}, 1),
+            choice("clipping", "Si hay clipping", {"Compresión dinámica (limitador)", "Reducir ganancia", "Saturar", "Cancelar"})});
         add("pan", "Proceso", "Pan/Expand…", "Balance y anchura estéreo mediante matriz mid/side. Requiere dos canales.", {number("pan", "Pan: izquierda −100 / derecha +100", 0, -100, 100), number("width", "Anchura estéreo (%)", 100, 0, 200)});
         add("resample", "Proceso", "Resample…", "Cambia la frecuencia de todo el documento con filtro antialias. Conserva la duración.", {number("rate", "Frecuencia de destino (Hz)", 48000, 8000, 192000, 0)}, true);
         add("reverse", "Proceso", "Reverse", "Invierte en el tiempo, conservando juntos los canales estéreo.");
@@ -184,7 +192,10 @@ Dsp::Result Dsp::apply(const AudioData &source, qint64 first, qint64 last, const
     QVector<float> input = source.samples.mid(first * channels, n * channels), output = input;
     result.audio = source; result.first = first;
     auto allocate = [&](qint64 frames) { return frames >= 0 && frames <= (maxSamples - (source.frames() - n) * channels) / channels; };
-    if (id == "insert_silence") {
+    if (id == "normalize") {
+        const QString error = normalizeSamples(output, channels, rate, values, parameters, cancel);
+        if (!error.isEmpty()) return fail(error);
+    } else if (id == "insert_silence") {
         qint64 count = qMax(qint64(1), qint64(std::llround(v("seconds") * rate)));
         if (!allocate(count + n)) return fail("El resultado supera el límite de 512 MB.");
         output = QVector<float>(count * channels, 0); last = first;
@@ -265,8 +276,6 @@ Dsp::Result Dsp::apply(const AudioData &source, qint64 first, qint64 last, const
         if (id == "dc" && v("remove")) {
             for (qint64 f = 0; f < n; ++f) { if ((f & 4095) == 0 && canceled(cancel)) return fail({}); for (int c = 0; c < channels; ++c) means[c] += input[f * channels + c] / double(n); }
         }
-        double peak = 0;
-        if (id == "normalize") for (qsizetype i = 0; i < input.size(); ++i) { if ((i & 8191) == 0 && canceled(cancel)) return fail({}); peak = qMax(peak, double(std::abs(input[i]))); }
         float *dst = output.data(); const float *src = input.constData();
         double envelope = 0, gateGain = 0, ic1[2] = {0,0}, ic2[2] = {0,0}; quint32 random = 0x31415926;
         qint64 writeFrame = 0;
@@ -274,7 +283,6 @@ Dsp::Result Dsp::apply(const AudioData &source, qint64 first, qint64 last, const
             if ((f & 4095) == 0 && canceled(cancel)) return fail({});
             double t = n > 1 ? double(f) / (n - 1) : 1, gain = 1;
             if (id == "volume") gain = db(v("gain"));
-            if (id == "normalize") gain = peak > 0 ? db(v("target")) / peak : 1;
             if (id == "mute") gain = 0;
             if (id == "invert") gain = -1;
             if (id == "fade.in") gain = t;

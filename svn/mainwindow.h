@@ -15,6 +15,7 @@
 #include <functional>
 
 class Recorder;
+class PreviewPlayer;
 class QToolButton;
 
 
@@ -105,7 +106,7 @@ private:
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
-    explicit MainWindow(std::function<Recorder *()> recordingSource = {});
+    explicit MainWindow(std::function<Recorder *()> recordingSource = {}, bool monitorInput = true);
     ~MainWindow() override;
     void openFile(const QString &path, bool alwaysNew = false);
 protected:
@@ -115,11 +116,18 @@ private:
     struct Playback;
     friend int playbackTests();
     friend int recordingScopeTests();
+    friend int inputMonitoringTests();
+    friend int normalizerDialogTests();
     std::unique_ptr<Playback> playback;
+    std::unique_ptr<PreviewPlayer> livePreview;
     std::function<Recorder *()> recordingSource;
     int recordingNumber = 0;
     // Grabación directa al documento enfocado, sin cuadro intermedio.
     Recorder *recorder = nullptr;
+    bool inputMonitoringEnabled = true;
+    QTimer inputMonitorRetry;
+    void ensureRecorder();
+    void startInputMonitor();
     Document *recordTarget = nullptr;
     bool recording = false;
     int recordBlinkTicks = 0;
@@ -127,6 +135,7 @@ private:
     QMdiArea *workspace;
     VuMeter *inputVu = nullptr;
     VuMeter *outputVu = nullptr;
+    QPointer<VuMeter> previewVu;
     QLabel *positionLabel, *formatLabel, *selectionLabel;
     QTimer timer;
     AudioData clipboard;

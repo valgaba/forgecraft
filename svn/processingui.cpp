@@ -1,5 +1,7 @@
 #include "mainwindow.h"
 #include "dsp.h"
+#include "normalizedialog.h"
+#include "previewplayer.h"
 #include <QMenu>
 #include <QFormLayout>
 #include <QVBoxLayout>
@@ -77,8 +79,34 @@ void MainWindow::runProcess(const QString &id) {
     if (!op || (!doc->data.frames() && id != "insert_silence")) return;
     stop();
     auto values = Dsp::defaults(id);
+    qint64 processFirst = doc->wave->first(), processLast = doc->wave->last();
     if (id == "resample") values["rate"] = doc->data.rate;
-    if (!op->parameters.isEmpty()) {
+    if (id == "normalize") {
+        NormalizeDialog dialog(doc->data, doc->wave->first(), doc->wave->last(), doc->name, this);
+        previewVu = dialog.meters;
+        dialog.previewAudio = [this, &dialog](const AudioData &audio, std::function<void()> finished) {
+            QString error;
+            if (livePreview && livePreview->active()) return livePreview->updateAudio(audio, error);
+            stopPlayback();
+            if (!livePreview) livePreview = std::make_unique<PreviewPlayer>();
+            livePreview->levels = [this](double left, double right) {
+                if (outputVu) outputVu->setLevels(left, right);
+                if (previewVu) previewVu->setLevels(left, right);
+            };
+            livePreview->failed = [this, finished](const QString &error) { statusBar()->showMessage(error, 5000); if (finished) finished(); };
+            bool started = false;
+            try { started = livePreview->start(audio, outputDevice, error); }
+            catch (const std::bad_alloc &) { livePreview->stop(); error = "No hay memoria suficiente para la preescucha."; }
+            if (!started) QMessageBox::warning(&dialog, "Previsualizar", error);
+            return started;
+        };
+        dialog.stopAudio = [this] { stopPlayback(); };
+        const int accepted = dialog.exec();
+        stopPlayback(); previewVu = nullptr;
+        if (accepted != QDialog::Accepted) return;
+        values = dialog.values();
+        processFirst = dialog.firstFrame(); processLast = dialog.lastFrame();
+    } else if (!op->parameters.isEmpty()) {
         QDialog dialog(this);
         dialog.setObjectName("processDialog");
         dialog.setWindowTitle(op->title);
@@ -267,7 +295,7 @@ void MainWindow::runProcess(const QString &id) {
     QFutureWatcher<Dsp::Result> watcher;
     connect(&watcher, &QFutureWatcher<Dsp::Result>::finished, &progress, &QDialog::accept);
     connect(&progress, &QProgressDialog::canceled, this, [cancel] { cancel->store(true); });
-    const AudioData before = doc->data; qint64 first = doc->wave->first(), last = doc->wave->last();
+    const AudioData before = doc->data; qint64 first = processFirst, last = processLast;
     watcher.setFuture(QtConcurrent::run([before, first, last, id, values, cancel] {
         try { return Dsp::apply(before, first, last, id, values, cancel.get()); }
         catch (const std::bad_alloc &) { Dsp::Result result; result.error = "No hay memoria suficiente para este proceso."; return result; }

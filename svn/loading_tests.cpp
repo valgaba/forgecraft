@@ -46,7 +46,7 @@ int loadingUiTests() {
     const auto audio = AudioData::tone(20, 440);
     const QString wav = temp.filePath("Carga WAV.wav"), mp3 = temp.filePath("Carga MP3.mp3");
     if (!temp.isValid() || !audio.write(wav, error) || !audio.write(mp3, error)) { check(false, "test fixtures"); return failures; }
-    MainWindow window; window.show(); auto *workspace = window.findChild<QMdiArea *>();
+    MainWindow window({}, false); window.show(); auto *workspace = window.findChild<QMdiArea *>();
     QTimer observe; observe.setInterval(0);
     bool cancel = false, sawDialog = false, validRange = true, sawError = false;
     QObject::connect(&observe, &QTimer::timeout, &window, [&] {

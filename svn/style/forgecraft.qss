@@ -545,6 +545,7 @@ QDialog#newAudioDialog QLabel#newMaxTime {
 QDialog#mixDialog { background-color: #181e2c; }
 
 /* Paneles de origen y destino del cuadro de mezcla. */
+QDialog[normalizer="true"] QGroupBox,
 QDialog#mixDialog QGroupBox#mixPanel {
     background-color: #20242e;
     border: 1px solid #333b4f;
@@ -553,6 +554,7 @@ QDialog#mixDialog QGroupBox#mixPanel {
     margin-top: 12px;
     padding: 10px 12px 8px 12px;
 }
+QDialog[normalizer="true"] QGroupBox::title,
 QDialog#mixDialog QGroupBox#mixPanel::title {
     subcontrol-origin: margin;
     left: 8px;

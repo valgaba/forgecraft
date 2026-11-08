@@ -7,6 +7,11 @@ RESOURCES += forgecraft.qrc
 RC_FILE = forgecraft.rc
 SOURCES += loading_tests.cpp
 SOURCES += audio_benchmark.cpp
+SOURCES += normalization.cpp normalizedialog.cpp
+SOURCES += normalizedialog_tests.cpp
+SOURCES += previewplayer.cpp
+HEADERS += previewplayer.h
+HEADERS += normalization.h normalizedialog.h
 win32:LIBS += -lwinmm
 DESTDIR = $$PWD/../out/bin
 CONFIG(debug, debug|release) {

@@ -1,4 +1,5 @@
 #include "dsp.h"
+#include "normalization.h"
 #include <QFile>
 #include <QTemporaryDir>
 #include <QCoreApplication>
@@ -61,5 +62,48 @@ int dspTests() {
     QTemporaryDir temp(QCoreApplication::applicationDirPath() + "/../build/dsp-test-XXXXXX"); QString error; auto eight = quantized.audio; eight.samples.resize(3); auto path = temp.filePath("8-bit.wav");
     bool written = eight.write(path, error); AudioData roundTrip; QFile file(path); file.open(QIODevice::ReadOnly); auto bytes = file.readAll();
     check(written && bytes.size() == 48 && quint8(bytes[34]) == 8 && AudioData::read(path, roundTrip, error) && roundTrip.bitDepth == 8 && roundTrip.samples == eight.samples, "8-bit WAV header, odd data padding and sample round trip");
+    {
+    AudioData constant; constant.rate = 8000; constant.channels = 1; constant.samples.fill(.2f, 8000);
+    Dsp::Values rmsSettings{{"mode", 1}, {"contour", 0}, {"ignore", -96}, {"target", -12}, {"clipping", 2}};
+    const auto measured = Dsp::scanNormalize(constant, 0, constant.frames(), rmsSettings);
+    check(std::abs(measured.peak - .2) < 1e-6 && std::abs(measured.rms - .2) < 1e-6, "normalizer scans exact peak and RMS");
+    const auto rmsNormalized = Dsp::apply(constant, 0, constant.frames(), "normalize", rmsSettings);
+    check(rmsNormalized.error.isEmpty() && std::abs(rmsNormalized.audio.samples[100] - std::pow(10.0, -12.0 / 20)) < 1e-6, "RMS normalization reaches the requested level");
+    auto cachedSettings = rmsSettings; cachedSettings["scan_cached"] = 1; cachedSettings["scan_peak"] = measured.peak; cachedSettings["scan_rms"] = measured.rms;
+    check(Dsp::apply(constant, 0, constant.frames(), "normalize", cachedSettings).audio.samples == rmsNormalized.audio.samples, "reusing a scan matches fresh normalization");
+    AudioData gated = constant; gated.samples.fill(0, 24000); for (int i = 8000; i < 16000; ++i) gated.samples[i] = .2f;
+    auto gateSettings = rmsSettings; gateSettings["ignore"] = -40; gateSettings["attack"] = 1; gateSettings["release"] = 1;
+    const auto gatedLevels = Dsp::scanNormalize(gated, 0, gated.frames(), gateSettings);
+    check(gatedLevels.rms > .19 && gatedLevels.rms < .201 && gatedLevels.includedFrames < 8500, "RMS scan ignores silent regions using its threshold detector");
+    gateSettings["ignore"] = -6;
+    check(Dsp::scanNormalize(gated, 0, gated.frames(), gateSettings).rms == 0, "RMS scan rejects material below its threshold");
+    AudioData burst = constant; burst.samples.resize(1000);
+    gateSettings["ignore"] = -20; gateSettings["attack"] = 1;
+    const auto fastScan = Dsp::scanNormalize(burst, 0, burst.frames(), gateSettings);
+    gateSettings["attack"] = 500;
+    check(fastScan.includedFrames > 900 && Dsp::scanNormalize(burst, 0, burst.frames(), gateSettings).includedFrames == 0,
+        "RMS detector attack time changes which short bursts pass the scan threshold");
+    auto weightedSettings = rmsSettings; weightedSettings["contour"] = 1;
+    const auto bass = AudioData::tone(1, 60, 8000, 1), presence = AudioData::tone(1, 2000, 8000, 1);
+    check(Dsp::scanNormalize(bass, 0, bass.frames(), weightedSettings).rms
+        < Dsp::scanNormalize(presence, 0, presence.frames(), weightedSettings).rms * .5,
+        "perceptual contour weights low frequencies less than presence frequencies");
+    AudioData stereo = constant; stereo.channels = 2; stereo.samples.resize(16000);
+    for (int i = 0; i < stereo.samples.size(); i += 2) { stereo.samples[i] = .1f; stereo.samples[i + 1] = .2f; }
+    const auto linked = Dsp::apply(stereo, 0, stereo.frames(), "normalize", rmsSettings);
+    check(linked.error.isEmpty() && std::abs(linked.audio.samples[1] / linked.audio.samples[0] - 2) < 1e-6,
+        "RMS normalization preserves the stereo balance with a common gain");
+    AudioData transient = constant; transient.samples.fill(.1f); transient.samples[4000] = 1;
+    auto clippingSettings = rmsSettings; clippingSettings["target"] = -6; clippingSettings["clipping"] = 3;
+    check(!Dsp::apply(transient, 0, transient.frames(), "normalize", clippingSettings).error.isEmpty(), "normalizer can reject clipping without modifying the source");
+    clippingSettings["clipping"] = 1;
+    auto reducedGain = Dsp::apply(transient, 0, transient.frames(), "normalize", clippingSettings);
+    check(reducedGain.audio.samples == transient.samples, "normalizer can reduce the common gain to prevent clipping");
+    clippingSettings["clipping"] = 0;
+    auto limited = Dsp::apply(transient, 0, transient.frames(), "normalize", clippingSettings);
+    check(limited.error.isEmpty() && limited.audio.samples[4000] <= 1 && limited.audio.samples[1000] > .4f, "normalizer dynamic limiter retains gain while bounding transients");
+    std::atomic_bool scanCancel{true};
+    check(Dsp::scanNormalize(constant, 0, constant.frames(), rmsSettings, &scanCancel).canceled, "normalization analysis is cancelable");
+    }
     return failures;
 }

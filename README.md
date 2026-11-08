@@ -1,4 +1,4 @@
-# ForgeCraft 0.1.3
+# ForgeCraft 0.1.4
 
 Editor de audio para Windows, inspirado en la estética y el flujo de los editores clásicos como Sound Forge 4.5. Implementación propia en **Qt Widgets 6.7.0, C++17 y MinGW 11.2 de 64 bits**, el mismo kit configurado en Radit.
 
@@ -12,12 +12,12 @@ Editor de audio para Windows, inspirado en la estética y el flujo de los editor
 | Diálogos de Proceso y Efectos con sliders, pie de selección y Previsualizar/Bypass. | Documento minimizado como botón al pie del área de trabajo. |
 | [![Cuadro de documento nuevo](forgecraft-nuevo.png)](forgecraft-nuevo.png) | [![Ventana Acerca de](forgecraft-acerca.png)](forgecraft-acerca.png) |
 | Documento nuevo: frecuencia, profundidad y canales. | Ventana «Acerca de» con la disposición de Radit. |
-| [![Cuadro de mezcla](forgecraft-mezcla.png)](forgecraft-mezcla.png) | |
-| Mezcla al arrastrar entre ventanas: volumen de cada parte y desplazamiento. | |
+| [![Cuadro de mezcla](forgecraft-mezcla.png)](forgecraft-mezcla.png) | [![Normalizador RMS con vúmetros verticales](forgecraft-normalizador.png)](forgecraft-normalizador.png) |
+| Mezcla al arrastrar entre ventanas: volumen de cada parte y desplazamiento. | Normalizador Peak/RMS con presets y preescucha en bucle. |
 
 ## Descarga
 
-[Descargar ForgeCraft 0.1.3 para Windows de 64 bits](https://github.com/valgaba/forgecraft/releases/download/forgecraft-0.1.3/forgecraft_0_1_3.zip). Descomprimir `forgecraft_0_1_3.zip` y ejecutar `forgecraft_0_1_3\forgecraft.exe`. No requiere instalación. El paquete incluye las DLL de Qt, los plugins, los códecs MP3, la hoja de estilo y las licencias; los detalles están en `README.txt` del propio paquete. La [página de la versión](https://github.com/valgaba/forgecraft/releases/tag/forgecraft-0.1.3) incluye la suma SHA256.
+[Descargar ForgeCraft 0.1.4 para Windows de 64 bits](https://github.com/valgaba/forgecraft/releases/download/forgecraft-0.1.4/forgecraft_0_1_4.zip). Descomprimir `forgecraft_0_1_4.zip` y ejecutar `forgecraft_0_1_4\forgecraft.exe`. No requiere instalación. El paquete incluye las DLL de Qt, los plugins, los códecs MP3, la hoja de estilo y las licencias; los detalles están en `README.txt` del propio paquete. La [página de la versión](https://github.com/valgaba/forgecraft/releases/tag/forgecraft-0.1.4) incluye la suma SHA256.
 
 ## Estructura
 
@@ -62,6 +62,7 @@ La apariencia sigue la identidad visual de Radit, según el análisis de `docs/a
 - Minimizar convierte el módulo en un botón bajo apoyado en el pie del área de trabajo, con la flecha de restaurar, el título recortado y el cierre, alineado en fila con los demás minimizados. El botón de restaurar o el doble clic lo devuelven a su tamaño y posición anteriores; los módulos minimizados no se arrastran ni los recolocan *Cascada* y *Mosaico*.
 - Los diálogos de Proceso y Efectos siguen el patrón de los editores clásicos con la paleta de Radit: nombre del proceso, descripción y ámbito, parámetros como sliders (columnas con el valor encima y la etiqueta debajo cuando hay tres o más; fila ancha con caja de valor cuando hay uno o dos), columna de botones a la derecha (Aplicar, Cancelar, Ayuda, Previsualizar y Bypass) y pie con la selección y los canales. Los rangos de más de dos décadas —frecuencias, duraciones— se reparten en escala logarítmica para que el slider sea manejable.
 - **Previsualizar** procesa el tramo de escucha con los parámetros actuales y lo reproduce sin aplicarlo; al terminar se detiene solo. **Bypass** alterna entre el resultado y el audio original para comparar. La escucha se limita a 15 segundos desde la selección o el cursor, y los valores se vuelven a leer al pulsar de nuevo Previsualizar tras cambiar un parámetro.
+- **Normalize** tiene un diálogo propio inspirado en la referencia clásica: presets de pico y RMS (−12, −10 para voz, −16 para música y −6 dB), sliders verticales de objetivo y umbral, ataque/relajación de análisis (1–500 ms), análisis de pico/RMS reutilizable y la selección actual del MDI. El contorno de igual sonoridad es una aproximación perceptual propia, no una medición LUFS. La política de clipping permite limitación dinámica enlazada en estéreo, reducción de ganancia, saturación o cancelación. A la derecha hay vúmetros verticales L/R de preescucha en dBFS, alimentados por el audio que se reproduce, incluido el bypass. La preescucha del normalizador se repite en bucle hasta pulsar Detener preescucha o cerrar el diálogo. Los cambios de parámetros y de preset se recalculan en segundo plano, conservando el audio anterior hasta disponer del nuevo; se sustituyen mediante un fundido de 20 ms sin reabrir el dispositivo ni reiniciar la posición. La salida se rellena desde un hilo dedicado de alta prioridad, con 80 ms de cola y lectura de buffers compartidos sin copias; no depende del repintado de la interfaz. Bypass también conserva la posición. La ganancia de la preescucha se calcula sobre toda la selección aunque solo se escuchen sus primeros 15 segundos. Los presets personales se guardan en la configuración y pueden eliminarse. La normalización siempre crea una operación de deshacer y conserva el historial previo.
 - En cada módulo, el desplazamiento de la vista ocupa la fila inferior y las lupas de acercar y alejar quedan a su derecha. El transporte inferior de la ventana principal usa iconos de 24 px.
 - Los diálogos heredan el tema por sus `objectName` (`recordDialog`, `processDialog`, `processingProgress`) y los diálogos de archivo se abren sin el shell nativo para mantener la coherencia.
 
@@ -74,7 +75,7 @@ Los valores de la hoja están ampliados respecto a Radit (barra de desplazamient
 
 - Ventanas de audio MDI superpuestas, con cascada y mosaico, con módulos de marco propio (barra de título con minimizar y cerrar, y bordes redimensionables).
 - Interfaz oscura con la identidad visual de Radit: superficies planas, acento `#80A4AE` y formas de onda sobre lienzo oscuro con reglas de tiempo por documento.
-- Los vúmetros estéreo horizontales de **Entrada** (grabación) y **Salida** (reproducción y previsualización) están en la misma fila de los controles comunes, inmediatamente después del tiempo. **Ver → Vúmetros** permite mostrarlos u ocultarlos. La barra de transporte inferior es común a todos los documentos. **Opciones → Opciones generales…** (Ctrl+,) permite elegir el **dispositivo de salida** (con un botón **Probar** que reproduce un tono) y el **dispositivo de grabación**; ambos se guardan para las próximas sesiones.
+- Los dos vúmetros estéreo horizontales están en el extremo derecho de la barra superior de **Archivo y edición**, con barras de hasta 380 píxeles, escala logarítmica de −60 a 0 dBFS y animación independiente a unos 60 fotogramas por segundo: un icono de **micrófono** identifica la entrada, que se mide continuamente aunque no se esté grabando, sin almacenar audio y otro de **altavoz** la salida de reproducción y previsualización. Ambos usan el estilo y el color de los iconos de Radit. **Ver → Vúmetros** permite mostrarlos u ocultarlos. La barra de transporte inferior es común a todos los documentos. **Opciones → Opciones generales…** (Ctrl+,) permite elegir el **dispositivo de salida** (con un botón **Probar** que reproduce un tono) y el **dispositivo de grabación**; ambos se guardan para las próximas sesiones.
 - Abrir WAV mono/estéreo PCM 8, 16, 24 y 32 bits, o float de 32 bits.
 - Abrir MP3 mono/estéreo, incluidos archivos con bitrate variable.
 - **Nuevo** abre un cuadro con frecuencia (8.000 a 192.000 Hz), profundidad (8, 16, 24 bits o 32 float), canales (mono/estéreo) y el tiempo máximo de edición; el documento se crea con ese formato.
@@ -129,7 +130,7 @@ Pulsar **Ctrl+R**, el botón rojo de la barra de transporte inferior o el de una
 
 1. La entrada se elige en **Opciones → Opciones generales… → Grabación**. La captura usa PCM de 16 bits mediante la API `waveIn` de Windows.
 2. El formato sale del documento: si ya tiene audio se usa su frecuencia y sus canales; si está vacío, 44.100 Hz estéreo.
-3. Mientras se graba, el **vúmetro de Entrada** de los controles comunes muestra el nivel de entrada y la barra de estado el tiempo acumulado. Volver a pulsar Grabar detiene la captura. Stop o **Esc** en la barra inferior la detienen cuando está enfocado el MDI que graba; el Stop de ese módulo también la detiene.
+3. El **vúmetro de Entrada** mide continuamente el dispositivo seleccionado; mientras se graba sigue mostrando su nivel y la barra de estado el tiempo acumulado. Volver a pulsar Grabar detiene la captura. Stop o **Esc** en la barra inferior la detienen cuando está enfocado el MDI que graba; el Stop de ese módulo también la detiene.
 4. Al detener, la toma se añade **al final del documento** como una operación de deshacer; lo que ya había no se toca.
 
 El **ajuste DC** (filtro paso alto a 20 Hz) va siempre activo: quita la componente continua que algunas entradas añaden. Todas las tomas tienen un límite de 512 MB de muestras en memoria (aproximadamente 25 minutos a 44.100 Hz estéreo). Si la toma no cabe en el documento se avisa y no se modifica nada.
@@ -165,10 +166,10 @@ Start-Process .\out\bin\forgecraft.exe -ArgumentList '--smoke-test' -Wait
 Con el ejecutable ya desplegado:
 
 ```powershell
-.\package.ps1 -Version 0.1.3
+.\package.ps1 -Version 0.1.4
 ```
 
-Genera `out/packages/forgecraft_0_1_3.zip` con el ejecutable, la hoja de estilo, las DLL, los plugins (`platforms`, `iconengines`, `imageformats`), los códecs MP3, las licencias y los textos de instalación, y escribe `out/packages/SHA256SUMS.txt`. Ese zip y el archivo de sumas son los dos assets que se adjuntan a la Release; los binarios no se guardan en el repositorio.
+Genera `out/packages/forgecraft_0_1_4.zip` con el ejecutable, la hoja de estilo, las DLL, los plugins (`platforms`, `iconengines`, `imageformats`), los códecs MP3, las licencias y los textos de instalación, y escribe `out/packages/SHA256SUMS.txt`. Ese zip y el archivo de sumas son los dos assets que se adjuntan a la Release; los binarios no se guardan en el repositorio.
 
 ## Alcance de esta versión
 

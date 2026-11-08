@@ -1,5 +1,6 @@
 #include "recorder.h"
 #include "mainwindow.h"
+#include "theme.h"
 #include <QApplication>
 #include <QAction>
 #include <QPushButton>
@@ -23,7 +24,7 @@ QByteArray pcmBlock(int frames, int channels, int rate, qint64 offset = 0) {
     }
     return result;
 }
-struct DeviceCounters { int starts = 0, stops = 0, destroyed = 0; };
+struct DeviceCounters { int starts = 0, stops = 0, destroyed = 0; quint32 device = 0; bool recording = false; };
 // Test-only input: the application always constructs the native Recorder.
 class SyntheticRecorder : public Recorder {
     QTimer clock;
@@ -40,7 +41,8 @@ public:
         });
     }
     ~SyntheticRecorder() override { stop(); ++counters->destroyed; }
-    bool start(quint32, int rate, int channels, bool record, QString &error) override {
+    bool start(quint32 device, int rate, int channels, bool record, QString &error) override {
+        counters->device = device; counters->recording = record;
         stop(); error.clear(); buffer.audio.rate = rate; buffer.audio.channels = channels; storing = record; open = true; ++counters->starts; clock.start(); return true;
     }
     bool active() const override { return open; }
@@ -77,7 +79,7 @@ int recordingScopeTests() {
     int failures = 0; DeviceCounters counters;
     auto check = [&](bool ok, const char *message) { std::printf("%s recording MDI %s\n", ok ? "PASS" : "FAIL", message); std::fflush(stdout); if (!ok) ++failures; };
     auto source = std::make_unique<SyntheticRecorder>(&counters);
-    MainWindow window([&] { return source.get(); }); window.show();
+    MainWindow window([&] { return source.get(); }, false); window.show();
     window.addDocument(AudioData{});
     auto wait = [] { QEventLoop loop; QTimer::singleShot(60, &loop, &QEventLoop::quit); loop.exec(); };
     auto *workspace = window.findChild<QMdiArea *>();
@@ -133,4 +135,48 @@ int recordingScopeTests() {
     check(!source->active(), "bottom Stop follows newly focused recording window");
     for (auto *child : workspace->subWindowList()) static_cast<Document *>(child->widget())->undo.setClean();
     window.close(); return failures;
+}
+
+int inputMonitoringTests() {
+    int failures = 0;
+    auto check = [&](bool ok, const char *message) { std::printf("%s input monitoring %s\n", ok ? "PASS" : "FAIL", message); std::fflush(stdout); if (!ok) ++failures; };
+    auto wait = [](int ms) { QEventLoop loop; QTimer::singleShot(ms, &loop, &QEventLoop::quit); loop.exec(); };
+    DeviceCounters counters;
+    auto source = std::make_unique<SyntheticRecorder>(&counters);
+    MainWindow window([&] { return source.get(); }); window.show();
+    wait(120);
+    check(source->active() && !counters.recording && source->buffer.audio.frames() == 0
+        && window.workspace->subWindowList().isEmpty(), "starts without a document and never stores monitored samples");
+    const QImage liveInput = window.inputVu->grab().toImage();
+    bool visibleLevel = false;
+    for (int y = 13; y < liveInput.height(); ++y) for (int x = 1; x < liveInput.width() - 1; ++x)
+        visibleLevel |= liveInput.pixelColor(x, y) == Theme::Accent;
+    check(visibleLevel, "input meter moves while not recording");
+    window.stopPlayback(); wait(60);
+    check(source->active() && source->buffer.audio.frames() == 0, "stopping playback leaves input monitoring running");
+    window.addDocument(AudioData{});
+    auto *document = window.current();
+    window.startRecording(); wait(90);
+    const qint64 takeFrames = source->buffer.audio.frames();
+    check(counters.recording && takeFrames > 0, "recording switches the same input to take accumulation");
+    window.stopRecording(); wait(60);
+    check(source->active() && !counters.recording && source->buffer.audio.frames() == 0
+        && document->data.frames() == takeFrames, "stopping recording resumes monitoring without extending the take");
+    source->stop(); window.inputDevice = 123; window.startInputMonitor(); wait(30);
+    check(source->active() && counters.device == 123 && !counters.recording, "monitoring reopens the selected input device");
+    document->undo.setClean(); window.close(); wait(20);
+    check(!source->active(), "closing the application releases the input device");
+
+    VuMeter scale; scale.resize(380, 28);
+    scale.setLevels(std::pow(10.0, -30.0 / 20.0), std::pow(10.0, -6.0 / 20.0));
+    wait(250);
+    const QImage image = scale.grab().toImage();
+    auto barEnd = [&](int y) {
+        int last = -1;
+        for (int x = 1; x < image.width() - 1; ++x) if (image.pixelColor(x, y) == Theme::Accent) last = x;
+        return last;
+    };
+    check(std::abs(barEnd(3) - 189) <= 3 && std::abs(barEnd(22) - 340) <= 3,
+        "dBFS scale maps -30 dB to halfway and -6 dB to 90 percent");
+    return failures;
 }

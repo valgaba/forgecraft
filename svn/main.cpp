@@ -37,6 +37,9 @@
 int dspTests();
 int recordingTests();
 int recordingScopeTests();
+int inputMonitoringTests();
+int normalizerDialogTests();
+int previewLoopTests();
 int loadingProgressTests();
 int loadingUiTests();
 int audioBenchmark();
@@ -107,6 +110,9 @@ static int selfTest() {
     failures += dspTests();
     failures += recordingTests();
     failures += recordingScopeTests();
+    failures += inputMonitoringTests();
+    failures += normalizerDialogTests();
+    failures += previewLoopTests();
     failures += loadingProgressTests();
     failures += loadingUiTests();
     failures += playbackTests();
@@ -138,13 +144,13 @@ static void applyTheme(QApplication &app) {
 }
 
 int main(int argc, char **argv) {
-    QApplication app(argc, argv); app.setApplicationName("ForgeCraft"); app.setApplicationVersion("0.1.3"); app.setOrganizationName("ForgeCraft");
+    QApplication app(argc, argv); app.setApplicationName("ForgeCraft"); app.setApplicationVersion("0.1.4"); app.setOrganizationName("ForgeCraft");
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/ForgeCraftAppIcon.png")));
     applyTheme(app);
     if (app.arguments().contains("--benchmark-audio")) return audioBenchmark();
     if (app.arguments().contains("--self-test")) return selfTest();
     if (app.arguments().contains("--smoke-test")) app.setAttribute(Qt::AA_DontUseNativeDialogs);
-    MainWindow window; window.show();
+    MainWindow window({}, !app.arguments().contains("--smoke-test")); window.show();
     if (app.arguments().contains("--smoke-test")) {
         QTimer::singleShot(100, &window, [&] {
             QTemporaryDir temp(QApplication::applicationDirPath() + "/../build/ui-test-XXXXXX");
@@ -205,6 +211,7 @@ int main(int argc, char **argv) {
                 }
                 if (auto *dialog = qobject_cast<QDialog *>(modal)) {
                     if (dialog->objectName() == "processDialog") {
+                        if (dialog->property("normalizer").toBool()) dialog->grab().save(QApplication::applicationDirPath() + "/../build/normalize-dialog.png");
                         if (!capturedDialog && responseMode == 0) { dialog->grab().save(QApplication::applicationDirPath() + "/../build/process-dialog.png"); capturedDialog = true; }
                         if (!capturedEq && dialog->windowTitle().contains("Graphic EQ")) { dialog->grab().save(QApplication::applicationDirPath() + "/../build/process-dialog-eq.png"); capturedEq = true; }
                         if (!previewControlsChecked) {

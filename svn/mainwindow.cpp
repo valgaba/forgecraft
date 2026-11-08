@@ -4,6 +4,7 @@
 #include "mixdialog.h"
 #include "optionsdialog.h"
 #include "recorder.h"
+#include "previewplayer.h"
 #include "theme.h"
 #include <QApplication>
 #include <QActionGroup>
@@ -348,7 +349,7 @@ static QString timeText(qint64 frame, int rate) {
     return QString("%1:%2:%3.%4").arg(ms / 3600000, 2, 10, QChar('0')).arg(ms / 60000 % 60, 2, 10, QChar('0')).arg(ms / 1000 % 60, 2, 10, QChar('0')).arg(ms % 1000, 3, 10, QChar('0'));
 }
 
-MainWindow::MainWindow(std::function<Recorder *()> source) : playback(new Playback), recordingSource(std::move(source)) {
+MainWindow::MainWindow(std::function<Recorder *()> source, bool monitorInput) : playback(new Playback), recordingSource(std::move(source)), inputMonitoringEnabled(monitorInput) {
     outputDevice = QSettings().value("audio/outputDevice", quint32(0xffffffffu)).toUInt();
     inputDevice = QSettings().value("audio/inputDevice", quint32(0xffffffffu)).toUInt();
     setWindowTitle("ForgeCraft"); resize(1500, 850);
@@ -437,18 +438,29 @@ MainWindow::MainWindow(std::function<Recorder *()> source) : playback(new Playba
     auto *meterLayout = new QHBoxLayout(meterPanel);
     meterLayout->setContentsMargins(8, 0, 0, 0);
     meterLayout->setSpacing(6);
-    meterLayout->addWidget(new QLabel("Entrada"));
+    auto meterIcon = [](const QString &name, const QString &description) {
+        auto *label = new QLabel;
+        label->setPixmap(Theme::icon(name).pixmap(20, 20));
+        label->setFixedSize(24, 24); label->setAlignment(Qt::AlignCenter);
+        label->setAccessibleName(description); label->setToolTip(description);
+        return label;
+    };
+    meterLayout->addWidget(meterIcon("microphone", "Entrada: micrófono / grabación"));
     inputVu = new VuMeter; inputVu->setObjectName("inputVu");
-    inputVu->setFixedSize(200, 16);
-    inputVu->setToolTip("Entrada L/R durante la grabación");
+    inputVu->setFixedHeight(28); inputVu->setMinimumWidth(220); inputVu->setMaximumWidth(380);
+    inputVu->setToolTip("Entrada L/R continua · escala de −60 a 0 dBFS");
     meterLayout->addWidget(inputVu);
     meterLayout->addSpacing(8);
-    meterLayout->addWidget(new QLabel("Salida"));
+    meterLayout->addWidget(meterIcon("speaker", "Salida: altavoz / reproducción"));
     outputVu = new VuMeter; outputVu->setObjectName("outputVu");
-    outputVu->setFixedSize(200, 16);
-    outputVu->setToolTip("Salida L/R de reproducción y previsualización");
+    outputVu->setFixedHeight(28); outputVu->setMinimumWidth(220); outputVu->setMaximumWidth(380);
+    outputVu->setToolTip("Salida L/R de reproducción y previsualización · escala de −60 a 0 dBFS");
     meterLayout->addWidget(outputVu);
-    auto *meterAction = controls->addWidget(meterPanel);
+    tools->addSeparator();
+    auto *meterSpace = new QWidget;
+    meterSpace->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    tools->addWidget(meterSpace);
+    auto *meterAction = tools->addWidget(meterPanel);
     auto *showMeters = view->addAction("Vúmetros");
     showMeters->setCheckable(true); showMeters->setChecked(true);
     connect(showMeters, &QAction::toggled, meterAction, &QAction::setVisible);
@@ -462,13 +474,19 @@ MainWindow::MainWindow(std::function<Recorder *()> source) : playback(new Playba
     add(help, "Acerca de ForgeCraft", {}, [this] { auto *about = new AboutDialog(this); about->show(); about->raise(); });
     connect(workspace, &QMdiArea::subWindowActivated, this, [this] { refresh(); });
     connect(&timer, &QTimer::timeout, this, &MainWindow::tick); timer.setInterval(35);
+    inputMonitorRetry.setSingleShot(true); inputMonitorRetry.setInterval(2000);
+    connect(&inputMonitorRetry, &QTimer::timeout, this, &MainWindow::startInputMonitor);
+    if (inputMonitoringEnabled) QTimer::singleShot(0, this, &MainWindow::startInputMonitor);
     setAcceptDrops(true); workspace->viewport()->setAcceptDrops(true); qApp->installEventFilter(this);
     this->showMaximized();
     refresh();
 }
 MainWindow::~MainWindow() {
+    inputMonitoringEnabled = false; inputMonitorRetry.stop();
+    if (recorder) recorder->stop();
     qApp->removeEventFilter(this);
     stopPlayback();
+    livePreview.reset();
     disconnect(workspace, nullptr, this, nullptr);
     for (auto *window : workspace->subWindowList()) {
         auto *d = static_cast<Document *>(window->widget());
@@ -824,6 +842,8 @@ void MainWindow::showOptions() {
     if (dialog.exec() != QDialog::Accepted) return;
     outputDevice = dialog.outputDevice();
     inputDevice = dialog.inputDevice();
+    if (!recording && recorder) recorder->stop();
+    startInputMonitor();
     QSettings().setValue("audio/outputDevice", outputDevice);
     QSettings().setValue("audio/inputDevice", inputDevice);
     statusBar()->showMessage("Dispositivos de audio guardados.", 3000);
@@ -839,6 +859,39 @@ bool MainWindow::playTestTone(quint32 device) {
 }
 // Grabación directa: la captura se acumula en memoria y, al detener, se añade al
 // final del documento enfocado como una operación de deshacer.
+void MainWindow::ensureRecorder() {
+    if (recorder) return;
+    recorder = recordingSource ? recordingSource() : new Recorder(this);
+    connect(recorder, &Recorder::updated, this, [this] {
+        if (!inputVu) return;
+        const auto &buffer = recorder->buffer;
+        inputVu->setLevels(buffer.peaks[0], buffer.audio.channels == 1 ? buffer.peaks[0] : buffer.peaks[1]);
+    });
+    connect(recorder, &Recorder::failed, this, [this](const QString &error) {
+        if (recording) { stopRecording(); statusBar()->showMessage(error, 5000); return; }
+        if (inputVu) { inputVu->reset(); inputVu->setToolTip("Entrada no disponible: " + error); }
+        if (inputMonitoringEnabled) inputMonitorRetry.start();
+    });
+    connect(recorder, &Recorder::limitReached, this, [this] {
+        if (recording) stopRecording();
+        else if (inputMonitoringEnabled) inputMonitorRetry.start();
+    });
+}
+void MainWindow::startInputMonitor() {
+    if (!inputMonitoringEnabled || recording) return;
+    ensureRecorder();
+    if (recorder->active()) return;
+    inputMonitorRetry.stop();
+    recorder->clear(44100, 2);
+    QString error;
+    if (!recorder->start(inputDevice, 44100, 2, false, error)
+        && !recorder->start(inputDevice, 44100, 1, false, error)) {
+        if (inputVu) { inputVu->reset(); inputVu->setToolTip("Entrada no disponible: " + error); }
+        inputMonitorRetry.start();
+        return;
+    }
+    if (inputVu) inputVu->setToolTip("Entrada L/R continua · escala de −60 a 0 dBFS");
+}
 void MainWindow::startRecording() {
     if (recording) { stopRecording(); return; }
     Document *target = current();
@@ -851,10 +904,12 @@ void MainWindow::startRecording() {
     if (!target) return;
     const int rate = target->data.rate;
     const int channels = target->data.channels;
-    if (!recorder) recorder = recordingSource ? recordingSource() : new Recorder(this);
+    ensureRecorder();
+    inputMonitorRetry.stop();
     recorder->clear(rate, channels);
     QString error;
     if (!recorder->start(inputDevice, rate, channels, true, error)) {
+        startInputMonitor();
         QMessageBox::warning(this, "Grabar", error.isEmpty() ? QString("No se pudo abrir la entrada de audio.") : error);
         return;
     }
@@ -878,6 +933,7 @@ void MainWindow::stopRecording() {
     recordTarget = nullptr;
     if (target) target->setRecordingOn(false);
     if (inputVu) inputVu->reset();
+    startInputMonitor();
     if (!target || !take.frames()) { if (!playback->document) timer.stop(); refresh(); return; }
     const qint64 end = target->data.frames();
     auto result = Recording::merge(target->data, take, Recording::Insert, end, end);
@@ -1037,7 +1093,7 @@ bool MainWindow::confirmClose(Document *d) {
     auto result = QMessageBox::question(this, "Cambios sin guardar", "¿Guardar los cambios de «" + d->name + "»?", QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
     return result == QMessageBox::Discard || (result == QMessageBox::Save && save(d));
 }
-void MainWindow::closeEvent(QCloseEvent *event) { if (recording) stopRecording(); for (auto *window : workspace->subWindowList()) if (!confirmClose(static_cast<Document *>(window->widget()))) { event->ignore(); return; } stop(); event->accept(); }
+void MainWindow::closeEvent(QCloseEvent *event) { if (recording) stopRecording(); for (auto *window : workspace->subWindowList()) if (!confirmClose(static_cast<Document *>(window->widget()))) { event->ignore(); return; } inputMonitoringEnabled = false; inputMonitorRetry.stop(); if (recorder) recorder->stop(); stop(); event->accept(); }
 void MainWindow::tone() {
     bool ok; double frequency = QInputDialog::getDouble(this, "Generar tono", "Frecuencia (Hz):", 440, 20, 20000, 1, &ok); if (!ok) return;
     double seconds = QInputDialog::getDouble(this, "Generar tono", "Duración (segundos):", 5, 0.01, 600, 2, &ok); if (!ok) return;
@@ -1139,6 +1195,7 @@ void MainWindow::stop() {
     stopPlayback();
 }
 void MainWindow::stopPlayback() {
+    if (livePreview) livePreview->stop();
     // Si hay una grabación en curso, el temporizador sigue vivo para su vúmetro.
     if (!recording) timer.stop();
     previewEnded = nullptr;
@@ -1150,6 +1207,7 @@ void MainWindow::stopPlayback() {
         playback->document = nullptr;
     }
     if (outputVu) outputVu->reset();
+    if (previewVu) previewVu->reset();
     playback->bytes.clear();
     playback->source = AudioData{}; playback->bytesPerFrame = 0;
 #ifdef Q_OS_WIN
@@ -1162,8 +1220,6 @@ void MainWindow::tick() {
     // Grabación y reproducción son independientes: se puede grabar en un módulo
     // mientras suena otro.
     if (recording) {
-        const double left = recorder ? recorder->buffer.peaks[0] : 0.0;
-        const double right = recorder && recorder->buffer.audio.channels == 1 ? left : (recorder ? recorder->buffer.peaks[1] : 0.0);
         const qint64 frames = recorder ? recorder->buffer.audio.frames() : 0;
         const int rate = recorder && recorder->buffer.audio.rate > 0 ? recorder->buffer.audio.rate : 44100;
         if (recordTarget) {
@@ -1171,7 +1227,6 @@ void MainWindow::tick() {
             // Parpadeo del botón de grabación en un rojo más oscuro (~350 ms).
             if (++recordBlinkTicks % 10 == 0) recordTarget->toggleRecordBlink();
         }
-        if (inputVu) inputVu->setLevels(left, right);
         statusBar()->showMessage(QString("Grabando en «%1» · %2").arg(recordTarget ? recordTarget->name : QString(), timeText(frames, rate)));
     }
     if (outputVu && playback->handle && !(playback->header.dwFlags & WHDR_DONE)) {
@@ -1187,6 +1242,7 @@ void MainWindow::tick() {
                 for (int c = 0; c < audio.channels; ++c)
                     peaks[c] = std::max(peaks[c], double(std::abs(audio.samples[f * audio.channels + c])));
             outputVu->setLevels(peaks[0], audio.channels == 1 ? peaks[0] : peaks[1]);
+            if (previewVu) previewVu->setLevels(peaks[0], audio.channels == 1 ? peaks[0] : peaks[1]);
         }
     }
     auto *d = playback->document;
@@ -1213,7 +1269,7 @@ int playbackTests() {
     auto check = [&](bool ok, const char *message) { std::printf("%s playback %s\n", ok ? "PASS" : "FAIL", message); std::fflush(stdout); if (!ok) ++failures; };
 #ifdef Q_OS_WIN
     if (!waveOutGetNumDevs()) { std::printf("SKIP playback native tests: no output device\n"); return 0; }
-    MainWindow window; window.show(); window.outputDevice = WAVE_MAPPER;
+    MainWindow window({}, false); window.show(); window.outputDevice = WAVE_MAPPER;
     window.addDocument(AudioData{});
     auto *first = window.current();
     first->data = AudioData{}; first->data.samples.fill(0, 4410 * 2); first->wave->invalidateCache();
