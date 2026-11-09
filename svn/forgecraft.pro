@@ -1,4 +1,6 @@
 QT += core gui widgets concurrent svg
+SOURCES += audioformats.cpp audiofiledialogs.cpp audioformats_tests.cpp
+HEADERS += audioformats.h audiofiledialogs.h
 CONFIG += c++17
 TARGET = forgecraft
 SOURCES += main.cpp audio.cpp mp3.cpp dsp.cpp processingui.cpp waveform.cpp mainwindow.cpp dsp_tests.cpp recorder.cpp recording_tests.cpp vumeter.cpp theme.cpp aboutdialog.cpp newaudiodialog.cpp mixdialog.cpp optionsdialog.cpp
@@ -10,6 +12,10 @@ SOURCES += audio_benchmark.cpp
 SOURCES += normalization.cpp normalizedialog.cpp
 SOURCES += normalizedialog_tests.cpp
 SOURCES += previewplayer.cpp
+SOURCES += processpreview.cpp processpreview_tests.cpp
+HEADERS += processpreview.h
+SOURCES += processpresets.cpp processpresets_tests.cpp
+HEADERS += processpresets.h
 HEADERS += previewplayer.h
 HEADERS += normalization.h normalizedialog.h
 win32:LIBS += -lwinmm

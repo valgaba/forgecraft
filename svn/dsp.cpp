@@ -112,7 +112,7 @@ void filter(QVector<float> &samples, int channels, int rate, int type, double fr
 const QVector<Dsp::Operation> &Dsp::operations() {
     static const QVector<Operation> catalog = [] {
         QVector<Operation> v;
-        auto add = [&](QString id, QString menu, QString title, QString description, QVector<Parameter> parameters = {}, bool whole = false) { v.append({id, menu, title, description, parameters, whole}); };
+        auto add = [&](QString id, QString menu, QString title, QString description, QVector<Parameter> parameters = {}, bool whole = false, bool preview = true) { v.append({id, menu, title, description, parameters, whole, preview}); };
         add("auto_trim", "Proceso", "Auto Trim/Crop…", "Recorta el silencio inicial y final de la selección, conservando un margen.", {number("threshold", "Umbral (dBFS)", -45, -96, -6), number("padding", "Margen (ms)", 10, 0, 1000)});
         add("channels", "Proceso", "Channel Converter…", "Convierte los canales de todo el documento.", {choice("mode", "Conversión", {"Mono: mezclar L + R", "Mono: canal izquierdo", "Mono: canal derecho", "Estéreo: duplicar mono"})}, true);
         add("bit8", "Proceso", "Convert to 8-Bit…", "Cuantiza todo el documento y configura el guardado WAV PCM de 8 bits.", {choice("dither", "Dither TPDF", {"Desactivado", "Activado"}, 1)}, true);
@@ -124,7 +124,7 @@ const QVector<Dsp::Operation> &Dsp::operations() {
         add("fade.out", "Proceso/Fade", "Out", "Fundido de salida lineal.");
         QVector<Parameter> envelope = {number("start", "Nivel inicial (dB)", -60, -96, 12), number("middle", "Nivel intermedio (dB)", 0, -96, 12), number("end", "Nivel final (dB)", -60, -96, 12), number("point", "Posición intermedia (%)", 50, 1, 99)};
         add("fade.envelope", "Proceso/Fade", "Graphic…", "Envolvente de tres puntos con interpolación lineal de amplitud.", envelope);
-        add("insert_silence", "Proceso", "Insert Silence…", "Inserta silencio en el cursor o al inicio de la selección.", {number("seconds", "Duración (s)", 1, .001, 600, 3)});
+        add("insert_silence", "Proceso", "Insert Silence…", "Inserta silencio en el cursor o al inicio de la selección.", {number("seconds", "Duración (s)", 1, .001, 600, 3)}, false, false);
         add("invert", "Proceso/Invert/Flip", "Invert polarity", "Invierte la polaridad de las muestras seleccionadas.");
         add("swap", "Proceso/Invert/Flip", "Flip channels", "Intercambia los canales izquierdo y derecho de la selección estéreo.");
         add("mute", "Proceso", "Mute", "Silencia la selección.");
@@ -137,7 +137,7 @@ const QVector<Dsp::Operation> &Dsp::operations() {
             choice("contour", "Contorno perceptual aproximado", {"No", "Sí"}, 1),
             choice("clipping", "Si hay clipping", {"Compresión dinámica (limitador)", "Reducir ganancia", "Saturar", "Cancelar"})});
         add("pan", "Proceso", "Pan/Expand…", "Balance y anchura estéreo mediante matriz mid/side. Requiere dos canales.", {number("pan", "Pan: izquierda −100 / derecha +100", 0, -100, 100), number("width", "Anchura estéreo (%)", 100, 0, 200)});
-        add("resample", "Proceso", "Resample…", "Cambia la frecuencia de todo el documento con filtro antialias. Conserva la duración.", {number("rate", "Frecuencia de destino (Hz)", 48000, 8000, 192000, 0)}, true);
+        add("resample", "Proceso", "Resample…", "Cambia la frecuencia de todo el documento con filtro antialias. Conserva la duración.", {number("rate", "Frecuencia de destino (Hz)", 48000, 8000, 192000, 0)}, true, false);
         add("reverse", "Proceso", "Reverse", "Invierte en el tiempo, conservando juntos los canales estéreo.");
         add("smooth", "Proceso", "Smooth/Enhance…", "Suaviza variaciones rápidas o realza el detalle de alta frecuencia.", {choice("mode", "Modo", {"Suavizar", "Realzar"}), number("amount", "Intensidad (%)", 50, 0, 100)});
         add("time", "Proceso", "Time Compress/Expand…", "Cambia la duración manteniendo el tono mediante alineamiento de ondas y solapamiento.", {number("duration", "Duración respecto al original (%)", 120, 50, 200)});

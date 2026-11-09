@@ -22,7 +22,7 @@ struct AudioData {
     // Porcentaje 0..100; devolver false cancela sin modificar out.
     using ReadProgress = std::function<bool(int)>;
     static bool read(const QString &path, AudioData &out, QString &error, const ReadProgress &progress = {});
-    bool write(const QString &path, QString &error, int mp3Bitrate = 192) const;
+    bool write(const QString &path, QString &error, int mp3Bitrate = 192, const ReadProgress &progress = {}) const;
     static AudioData tone(double seconds, double frequency, int rate = 44100, int channels = 2);
     void process(qint64 first, qint64 last, const QString &operation, double gain = 1.0);
     // Tramo del documento con las marcas que caen dentro, ya referidas a su inicio.

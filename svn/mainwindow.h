@@ -118,6 +118,9 @@ private:
     friend int recordingScopeTests();
     friend int inputMonitoringTests();
     friend int normalizerDialogTests();
+    friend int processPreviewTests();
+    friend int processPresetTests();
+    friend int audioFormatUiTests();
     std::unique_ptr<Playback> playback;
     std::unique_ptr<PreviewPlayer> livePreview;
     std::function<Recorder *()> recordingSource;
@@ -176,6 +179,7 @@ private:
     // Vista previa de un proceso: reproduce un audio sin documento asociado.
     // Devuelve si la reproducción llegó a empezar.
     bool playPreview(const AudioData &audio, qint64 first, qint64 last, std::function<void()> finished);
+    bool playLivePreview(const AudioData &audio, std::function<void()> finished, QWidget *errorParent);
     void stop();
     void stopDocument(Document *document);
     void stopPlayback();

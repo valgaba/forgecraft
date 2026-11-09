@@ -29,3 +29,9 @@ Texto: `licenses/LGPL-2.1.txt`. Origen: <https://www.mpg123.de/>
 Texto: `licenses/LGPL-2.1.txt` (aplicable por la opción de versión posterior). Origen: <https://lame.sourceforge.io/>
 
 Las DLL de mpg123 y LAME se cargan dinámicamente y pueden sustituirse por compilaciones compatibles. ForgeCraft no usa las funciones de decodificación de LAME.
+
+## FFmpeg 9.0.2 — FFmpeg developers y Gyan
+
+codecs/ffmpeg.exe y codecs/ffprobe.exe, compilación estática essentials de Gyan sin modificar, GPL versión 3. Licencia, configuración y procedencia: licenses/FFmpeg-LICENSE.txt, licenses/FFmpeg-BUILD-README.txt y licenses/FFmpeg-NOTICE.md.
+Código fuente correspondiente: https://github.com/FFmpeg/FFmpeg/commit/946fcce07b
+Distribuidor: https://www.gyan.dev/ffmpeg/builds/

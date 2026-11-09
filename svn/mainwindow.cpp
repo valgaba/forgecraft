@@ -1,4 +1,6 @@
 #include "mainwindow.h"
+#include "audioformats.h"
+#include "audiofiledialogs.h"
 #include "aboutdialog.h"
 #include "newaudiodialog.h"
 #include "mixdialog.h"
@@ -211,7 +213,6 @@ Document::Document(QWidget *parent) : QWidget(parent) {
     layout->addWidget(body, 1);
     auto *overview = new QFrame; overview->setObjectName("overviewStrip"); overview->setFixedHeight(11); content->addWidget(overview);
     wave = new Waveform(this); wave->audio = &data; content->addWidget(wave, 1); undo.setUndoLimit(20);
-    wave->setToolTip("Arrastra para seleccionar. Arrastra un extremo de la selección para ajustarla. Arrastra desde dentro de la selección para copiarla a otro módulo o al área de trabajo. Durante el arrastre, clic derecho manteniendo el izquierdo para alternar entre mezclar e insertar.");
     wave->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(wave, &QWidget::customContextMenuRequested, this, [this](const QPoint &point) {
         if (wave->selectionDragActive()) return;
@@ -374,7 +375,7 @@ MainWindow::MainWindow(std::function<Recorder *()> source, bool monitorInput) : 
         data.bitDepth = dialog.bitDepth(); data.floatFormat = dialog.floatFormat();
         addDocument(data);
     }, "new"));
-    tools->addAction(add(file, "&Abrir audio…", QKeySequence::Open, [this] { QString p = QFileDialog::getOpenFileName(this, "Abrir audio", {}, "Audio WAV y MP3 (*.wav *.mp3);;Audio WAV (*.wav);;Audio MP3 (*.mp3);;Todos los archivos (*)", nullptr, QFileDialog::DontUseNativeDialog); if (!p.isEmpty()) openFile(p); }, "open"));
+    tools->addAction(add(file, "&Abrir audio…", QKeySequence::Open, [this] { const auto paths = QFileDialog::getOpenFileNames(this, "Abrir audio", {}, AudioFormats::openFilters()); for (int i = 0; i < paths.size(); ++i) openFile(paths[i], i > 0); }, "open"));
     tools->addAction(add(file, "&Guardar", QKeySequence::Save, [this] { if (current()) save(current()); }, "save"));
     add(file, "Guardar &como…", QKeySequence::SaveAs, [this] { if (current()) save(current(), true); }, "save-as");
     file->addSeparator(); add(file, "&Cerrar documento", QKeySequence::Close, [this] { workspace->closeActiveSubWindow(); });
@@ -620,7 +621,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
         QStringList paths;
         for (const auto &url : drop->mimeData()->urls()) if (url.isLocalFile()) {
             QString path = url.toLocalFile();
-            if (QFileInfo(path).isFile() && (path.endsWith(".wav", Qt::CaseInsensitive) || path.endsWith(".mp3", Qt::CaseInsensitive))) paths.append(path);
+            if (QFileInfo(path).isFile() && AudioFormats::canOpen(path)) paths.append(path);
         }
         if (!paths.isEmpty()) {
             drop->setDropAction(Qt::CopyAction); drop->accept();
@@ -752,6 +753,8 @@ void MainWindow::addDocument(AudioData data, const QString &path, Waveform::Peak
     window->show(); workspace->setActiveSubWindow(window); refresh();
 }
 void MainWindow::openFile(const QString &path, bool alwaysNew) {
+    RawAudioOptions raw;
+    if (AudioFormats::isRaw(path) && !chooseRawAudio(this, raw)) return;
     struct LoadedAudio { AudioData data; Waveform::PeakData peaks; QString error; bool ok = false; };
     auto percentage = std::make_shared<std::atomic_int>(0);
     auto canceled = std::make_shared<std::atomic_bool>(false);
@@ -768,10 +771,11 @@ void MainWindow::openFile(const QString &path, bool alwaysNew) {
     });
     QFutureWatcher<LoadedAudio> watcher;
     connect(&watcher, &QFutureWatcher<LoadedAudio>::finished, &progress, &QDialog::accept);
-    watcher.setFuture(QtConcurrent::run([path, percentage, canceled] {
+    watcher.setFuture(QtConcurrent::run([path, raw, percentage, canceled] {
         LoadedAudio loaded;
         try {
-            loaded.ok = AudioData::read(path, loaded.data, loaded.error, [percentage, canceled](int value) { percentage->store(value * 85 / 100); return !canceled->load(); });
+            auto report = [percentage, canceled](int value) { percentage->store(value * 85 / 100); return !canceled->load(); };
+            loaded.ok = AudioFormats::isRaw(path) ? AudioFormats::read(path, loaded.data, loaded.error, report, raw) : AudioData::read(path, loaded.data, loaded.error, report);
             if (loaded.ok && !canceled->load()) {
                 loaded.peaks = Waveform::preparePeaks(loaded.data, [percentage, canceled](int value) { percentage->store(85 + value * 14 / 100); return !canceled->load(); });
                 loaded.ok = !loaded.peaks.canceled;
@@ -1043,35 +1047,33 @@ void MainWindow::edit(const QString &op, double gain) {
 }
 bool MainWindow::save(Document *d, bool saveAs) {
     QString path = d->path;
-    QString wavFilter = d->data.floatFormat ? "Audio WAV float de 32 bits (*.wav)"
-                       : d->data.bitDepth == 8 ? "Audio WAV PCM de 8 bits (*.wav)"
-                       : d->data.bitDepth == 24 ? "Audio WAV PCM de 24 bits (*.wav)"
-                       : d->data.bitDepth == 32 ? "Audio WAV PCM de 32 bits (*.wav)"
-                       : "Audio WAV PCM de 16 bits (*.wav)";
-    QString filter = path.endsWith(".mp3", Qt::CaseInsensitive) ? "Audio MP3 (*.mp3)" : wavFilter;
-    if (path.isEmpty() || saveAs) {
+    const auto *originalFormat = AudioFormats::forPath(path);
+    QString filter = AudioFormats::filter(originalFormat ? *originalFormat : AudioFormats::formats().first());
+    if (path.isEmpty() || saveAs || !originalFormat) {
         QFileDialog dialog(this, "Guardar audio");
-        dialog.setOption(QFileDialog::DontUseNativeDialog);
         dialog.setAcceptMode(QFileDialog::AcceptSave); dialog.setFileMode(QFileDialog::AnyFile);
-        dialog.setNameFilters({wavFilter, "Audio MP3 (*.mp3)"}); dialog.selectNameFilter(filter);
-        dialog.setDefaultSuffix(filter.contains("*.mp3") ? "mp3" : "wav");
+        dialog.setNameFilters(AudioFormats::saveFilters()); dialog.selectNameFilter(filter);
+        dialog.setDefaultSuffix(originalFormat ? originalFormat->suffix : "wav");
         dialog.selectFile(path.isEmpty() ? d->name : path);
         connect(&dialog, &QFileDialog::filterSelected, &dialog, [&dialog](const QString &selected) {
-            QString suffix = selected.contains("*.mp3") ? "mp3" : "wav";
-            dialog.setDefaultSuffix(suffix);
-            if (!dialog.selectedFiles().isEmpty()) {
-                QString name = dialog.selectedFiles().first();
-                if (name.endsWith(".wav", Qt::CaseInsensitive) || name.endsWith(".mp3", Qt::CaseInsensitive)) dialog.selectFile(name.chopped(3) + suffix);
+            if (const auto *format = AudioFormats::forFilter(selected)) {
+                dialog.setDefaultSuffix(format->suffix);
+                if (!dialog.selectedFiles().isEmpty() && AudioFormats::forPath(dialog.selectedFiles().first()))
+                    dialog.selectFile(AudioFormats::pathForFormat(dialog.selectedFiles().first(), *format));
             }
         });
         if (dialog.exec() != QDialog::Accepted) return false;
-        path = dialog.selectedFiles().value(0); filter = dialog.selectedNameFilter();
+        const QString chosen = dialog.selectedFiles().value(0);
+        const auto *selected = AudioFormats::forFilter(dialog.selectedNameFilter());
+        if (chosen.isEmpty() || !selected) return false;
+        path = AudioFormats::pathForFormat(chosen, *selected);
+        if (path != chosen && QFileInfo::exists(path) && QMessageBox::question(this, "Reemplazar archivo", "El archivo «" + QFileInfo(path).fileName() + "» ya existe. ¿Quieres reemplazarlo?", QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return false;
     }
     if (path.isEmpty()) return false;
-    if (!path.endsWith(".wav", Qt::CaseInsensitive) && !path.endsWith(".mp3", Qt::CaseInsensitive)) {
-        path += filter.contains("*.mp3") ? ".mp3" : ".wav";
-        if (QFileInfo::exists(path) && QMessageBox::question(this, "Reemplazar archivo", "El archivo «" + QFileInfo(path).fileName() + "» ya existe. ¿Quieres reemplazarlo?", QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return false;
-    }
+    const auto *format = AudioFormats::forPath(path);
+    if (!format) return false;
+    AudioExportOptions exportOptions;
+    if (format->id != "wav" && format->id != "mp3" && !chooseAudioExport(this, *format, d->data, exportOptions)) return false;
     int bitrate = d->mp3Bitrate;
     if (path.endsWith(".mp3", Qt::CaseInsensitive)) {
         const QStringList qualities = {"128 kbps", "192 kbps", "256 kbps", "320 kbps"};
@@ -1081,10 +1083,29 @@ bool MainWindow::save(Document *d, bool saveAs) {
         if (d->data.rate != 32000 && d->data.rate != 44100 && d->data.rate != 48000)
             if (QMessageBox::information(this, "Frecuencia MP3", "El MP3 se guardará a 44.100 Hz. El audio de este documento conservará su frecuencia original.", QMessageBox::Ok | QMessageBox::Cancel) != QMessageBox::Ok) return false;
     }
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    QString error; bool ok = d->data.write(path, error, bitrate);
-    QApplication::restoreOverrideCursor();
-    if (!ok) { QMessageBox::warning(this, "Guardar", error); return false; }
+    struct Saved { bool ok = false; QString error; };
+    auto percentage = std::make_shared<std::atomic_int>(0);
+    auto canceled = std::make_shared<std::atomic_bool>(false);
+    QProgressDialog progress("Codificando: " + QFileInfo(path).fileName(), "Cancelar", 0, 100, this);
+    progress.setWindowTitle("Guardando audio"); progress.setMinimumDuration(0);
+    progress.setWindowModality(Qt::ApplicationModal); progress.setAutoClose(false); progress.setAutoReset(false);
+    connect(&progress, &QProgressDialog::canceled, this, [canceled] { canceled->store(true); });
+    QTimer timer; timer.setInterval(30);
+    connect(&timer, &QTimer::timeout, &progress, [&] { progress.setValue(qMin(99, percentage->load())); });
+    QFutureWatcher<Saved> watcher;
+    connect(&watcher, &QFutureWatcher<Saved>::finished, &progress, &QDialog::accept);
+    const bool extendedFormat = format->id != "wav" && format->id != "mp3";
+    watcher.setFuture(QtConcurrent::run([audio = d->data, path, bitrate, exportOptions, percentage, canceled, extendedFormat] {
+        Saved saved;
+        auto report = [percentage, canceled](int value) { percentage->store(value); return !canceled->load(); };
+        try { saved.ok = extendedFormat ? AudioFormats::write(audio, path, exportOptions, saved.error, report) : audio.write(path, saved.error, bitrate, report); }
+        catch (const std::bad_alloc &) { saved.error = "No hay memoria suficiente para guardar este audio."; }
+        return saved;
+    }));
+    timer.start(); if (!watcher.isFinished()) progress.exec();
+    watcher.waitForFinished(); timer.stop();
+    const auto result = watcher.result();
+    if (!result.ok) { if (!canceled->load()) QMessageBox::warning(this, "Guardar", result.error); return false; }
     d->mp3Bitrate = bitrate;
     d->path = path; d->name = QFileInfo(path).fileName(); d->undo.setClean(); refresh(); statusBar()->showMessage("Guardado: " + path, 5000); return true;
 }

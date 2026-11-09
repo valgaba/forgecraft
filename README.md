@@ -1,4 +1,4 @@
-# ForgeCraft 0.1.4
+# ForgeCraft 0.1.5
 
 Editor de audio para Windows, inspirado en la estética y el flujo de los editores clásicos como Sound Forge 4.5. Implementación propia en **Qt Widgets 6.7.0, C++17 y MinGW 11.2 de 64 bits**, el mismo kit configurado en Radit.
 
@@ -17,7 +17,7 @@ Editor de audio para Windows, inspirado en la estética y el flujo de los editor
 
 ## Descarga
 
-[Descargar ForgeCraft 0.1.4 para Windows de 64 bits](https://github.com/valgaba/forgecraft/releases/download/forgecraft-0.1.4/forgecraft_0_1_4.zip). Descomprimir `forgecraft_0_1_4.zip` y ejecutar `forgecraft_0_1_4\forgecraft.exe`. No requiere instalación. El paquete incluye las DLL de Qt, los plugins, los códecs MP3, la hoja de estilo y las licencias; los detalles están en `README.txt` del propio paquete. La [página de la versión](https://github.com/valgaba/forgecraft/releases/tag/forgecraft-0.1.4) incluye la suma SHA256.
+[Descargar ForgeCraft 0.1.5 para Windows de 64 bits](https://github.com/valgaba/forgecraft/releases/download/forgecraft-0.1.5/forgecraft_0_1_5.zip). Descomprimir `forgecraft_0_1_5.zip` y ejecutar `forgecraft_0_1_5\forgecraft.exe`. No requiere instalación. El paquete incluye las DLL de Qt, los plugins, los códecs MP3, la hoja de estilo y las licencias; los detalles están en `README.txt` del propio paquete. La [página de la versión](https://github.com/valgaba/forgecraft/releases/tag/forgecraft-0.1.5) incluye la suma SHA256.
 
 ## Estructura
 
@@ -45,7 +45,7 @@ La carpeta `svn` organiza las fuentes con el mismo criterio que Radit. El nombre
 
 ## Abrir
 
-Ejecutar `out/bin/forgecraft.exe`. Mantener las DLL, las carpetas `platforms`, `iconengines` e `imageformats`, la carpeta `licenses` y la hoja `forgecraft.qss` junto al ejecutable. Las bibliotecas MP3 se incluyen en el proyecto y se copian al ejecutar `build.ps1 -Deploy`.
+Ejecutar `out/bin/forgecraft.exe`. Mantener las DLL, las carpetas `platforms`, `iconengines` e `imageformats`, la carpeta `licenses` y la hoja `forgecraft.qss` junto al ejecutable. Las bibliotecas MP3 se incluyen en el proyecto y se copian al ejecutar `build.ps1 -Deploy`. Para los formatos adicionales, ejecutar primero `setup-codecs.ps1`; mantener también la carpeta `codecs` junto al ejecutable.
 Para editar el proyecto en Qt Creator, abrir `svn/forgecraft.pro` y seleccionar el kit Desktop Qt 6.7.0 MinGW 64-bit.
 
 ## Interfaz
@@ -60,11 +60,13 @@ La apariencia sigue la identidad visual de Radit, según el análisis de `docs/a
 - El estilo de Qt es **Fusion**, que dibuja con la paleta y evita restos claros del tema nativo de Windows.
 - Las subventanas MDI no usan el marco del sistema: cada módulo dibuja su barra de título (`Frame#framebarra`) con minimizar y cerrar. Arrastrar la barra mueve el módulo, el doble clic lo maximiza y los bordes izquierdo, derecho e inferior redimensionan el módulo; el puntero cambia de forma al entrar en la zona de agarre y una pequeña marca en la esquina inferior derecha lo recuerda. La franja de la barra de título queda reservada para mover, así que no redimensiona.
 - Minimizar convierte el módulo en un botón bajo apoyado en el pie del área de trabajo, con la flecha de restaurar, el título recortado y el cierre, alineado en fila con los demás minimizados. El botón de restaurar o el doble clic lo devuelven a su tamaño y posición anteriores; los módulos minimizados no se arrastran ni los recolocan *Cascada* y *Mosaico*.
-- Los diálogos de Proceso y Efectos siguen el patrón de los editores clásicos con la paleta de Radit: nombre del proceso, descripción y ámbito, parámetros como sliders (columnas con el valor encima y la etiqueta debajo cuando hay tres o más; fila ancha con caja de valor cuando hay uno o dos), columna de botones a la derecha (Aplicar, Cancelar, Ayuda, Previsualizar y Bypass) y pie con la selección y los canales. Los rangos de más de dos décadas —frecuencias, duraciones— se reparten en escala logarítmica para que el slider sea manejable.
-- **Previsualizar** procesa el tramo de escucha con los parámetros actuales y lo reproduce sin aplicarlo; al terminar se detiene solo. **Bypass** alterna entre el resultado y el audio original para comparar. La escucha se limita a 15 segundos desde la selección o el cursor, y los valores se vuelven a leer al pulsar de nuevo Previsualizar tras cambiar un parámetro.
+- Los diálogos de Proceso y Efectos siguen el patrón de los editores clásicos con la paleta de Radit: parámetros como sliders verticales (valor encima y etiqueta debajo; caja numérica cuando hay uno o dos parámetros), columna de botones a la derecha (Aplicar, Cancelar, Previsualizar y Bypass) y pie con la selección y los canales. Los rangos de más de dos décadas —frecuencias, duraciones— se reparten en escala logarítmica para que el slider sea manejable.
+- Cada diálogo de Proceso y Efectos con parámetros incluye un **combo de presets en la parte superior, alineado con Aplicar**, **Guardar como…** y **Eliminar preset**. Se incluyen ajustes iniciales por operación (salas, halls y catedral para Reverb; slapback y ecos para Delay; voz y música para dinámica; curvas de EQ, formatos de remuestreo y otros). Los ajustes personales persisten entre sesiones y están separados por operación; los incluidos no se pueden sobrescribir ni eliminar. Al modificar un control aparece `(Sin título)`. Elegir un preset actualiza los controles y la preescucha en curso sin detenerla.
+- **Previsualizar** reproduce en bucle el tramo de escucha sin aplicar cambios al documento. En todos los diálogos de Proceso y Efectos, los sliders, las cajas numéricas y las listas actualizan el resultado durante la reproducción: se recalcula en segundo plano y se publica el último ajuste con un fundido breve, conservando la salida de audio y su posición. **Bypass** alterna entre el resultado y el original; los cambios hechos en bypass estarán listos al volver al efecto. La escucha utiliza hasta 15 segundos de audio de la selección o del cursor, más las colas generadas por el efecto. Se detiene al pulsar Detener preescucha o cerrar el diálogo. Los cambios de frecuencia o canales se adaptan al formato de escucha sin modificar el formato real del documento.
+- Los diálogos con preescucha incluyen un **vúmetro vertical L/R a la derecha**, con escala de −60 a 0 dBFS y nivel real de la salida, también en Bypass. **Resample** e **Insert Silence** no muestran preescucha, Bypass ni vúmetro. Las operaciones directas sin diálogo conservan su funcionamiento inmediato.
 - **Normalize** tiene un diálogo propio inspirado en la referencia clásica: presets de pico y RMS (−12, −10 para voz, −16 para música y −6 dB), sliders verticales de objetivo y umbral, ataque/relajación de análisis (1–500 ms), análisis de pico/RMS reutilizable y la selección actual del MDI. El contorno de igual sonoridad es una aproximación perceptual propia, no una medición LUFS. La política de clipping permite limitación dinámica enlazada en estéreo, reducción de ganancia, saturación o cancelación. A la derecha hay vúmetros verticales L/R de preescucha en dBFS, alimentados por el audio que se reproduce, incluido el bypass. La preescucha del normalizador se repite en bucle hasta pulsar Detener preescucha o cerrar el diálogo. Los cambios de parámetros y de preset se recalculan en segundo plano, conservando el audio anterior hasta disponer del nuevo; se sustituyen mediante un fundido de 20 ms sin reabrir el dispositivo ni reiniciar la posición. La salida se rellena desde un hilo dedicado de alta prioridad, con 80 ms de cola y lectura de buffers compartidos sin copias; no depende del repintado de la interfaz. Bypass también conserva la posición. La ganancia de la preescucha se calcula sobre toda la selección aunque solo se escuchen sus primeros 15 segundos. Los presets personales se guardan en la configuración y pueden eliminarse. La normalización siempre crea una operación de deshacer y conserva el historial previo.
 - En cada módulo, el desplazamiento de la vista ocupa la fila inferior y las lupas de acercar y alejar quedan a su derecha. El transporte inferior de la ventana principal usa iconos de 24 px.
-- Los diálogos heredan el tema por sus `objectName` (`recordDialog`, `processDialog`, `processingProgress`) y los diálogos de archivo se abren sin el shell nativo para mantener la coherencia.
+- Los diálogos heredan el tema por sus `objectName` (`recordDialog`, `processDialog`, `processingProgress`) y los diálogos de **Abrir** y **Guardar como** usan los nativos de Windows.
 
 Los valores de la hoja están ampliados respecto a Radit (barra de desplazamiento de 12 px, controles de 24 px) para que la interfaz siga siendo usable en pantallas de alta densidad.
 
@@ -92,7 +94,7 @@ Los valores de la hoja están ampliados respecto a Radit (barra de desplazamient
 - Cortar, copiar, pegar, borrar y recortar; deshacer/rehacer hasta 20 operaciones.
 - Volumen, normalización, fundidos, inversión temporal y silencio.
 - Generador de tono sinusoidal y aviso de cambios sin guardar.
-- Arrastrar uno o varios WAV/MP3 sobre el escritorio de trabajo o una forma de onda abre una ventana nueva por archivo, sin sustituir el documento anterior.
+- Arrastrar uno o varios archivos de audio compatibles sobre el escritorio de trabajo o una forma de onda abre una ventana nueva por archivo, sin sustituir el documento anterior.
 - Campos de inicio, final y duración de selección en cada ventana.
 - Grabación PCM de 16 bits con dispositivo de entrada, mono/estéreo, monitorización permanente de niveles, pausa/reanudación, límite de duración y ajuste DC automático.
 
@@ -108,17 +110,23 @@ Las entradas conservan los nombres de las capturas para facilitar su identificac
 
 Los efectos actúan sobre la selección, o sobre todo el audio si no hay selección. Channel Converter, Convert to 8-Bit y Resample siempre actúan sobre el documento completo. Insert Silence inserta en el cursor/inicio de selección. Las colas de eco y reverberación se añaden al final de la región procesada, antes del audio posterior; su duración puede ponerse a cero. Los efectos estéreo específicos requieren dos canales. La envolvente permite ajustar tres puntos de ganancia y la posición del punto intermedio.
 
-Los diálogos explican el ámbito y permiten ajustar los parámetros. El procesamiento se ejecuta en un hilo de trabajo con cancelación y se registra como una operación de deshacer. Cancelar conserva el audio anterior. La salida se limita al rango digital −1 a +1; los aumentos de nivel pueden saturar. Los algoritmos de tiempo/tono usan solapamiento y alineamiento de ondas; Pitch Bend es granular y no incluye preservación de formantes. La forma de onda utiliza una caché de picos para agilizar el redibujado de archivos largos.
+Los diálogos permiten ajustar los parámetros. El procesamiento se ejecuta en un hilo de trabajo con cancelación y se registra como una operación de deshacer. Cancelar conserva el audio anterior. La salida se limita al rango digital −1 a +1; los aumentos de nivel pueden saturar. Los algoritmos de tiempo/tono usan solapamiento y alineamiento de ondas; Pitch Bend es granular y no incluye preservación de formantes. La forma de onda utiliza una caché de picos para agilizar el redibujado de archivos largos.
 
 Referencias técnicas: filtros biquad según el [Audio EQ Cookbook del W3C](https://www.w3.org/TR/audio-eq-cookbook/). La implementación de tiempo/tono es propia y no incorpora SoundTouch ni otras bibliotecas DSP.
 
-## Abrir y guardar MP3
+## Abrir y guardar audio
 
-Al abrir un WAV o MP3 aparece una barra de progreso con el nombre del archivo y el porcentaje de carga. Incluye la lectura/decodificación y la preparación de la forma de onda, realizadas en segundo plano. **Cancelar** interrumpe la carga sin modificar los documentos abiertos. También se muestra al cargar archivos arrastrándolos al editor.
+Abrir y Guardar como utilizan los **diálogos nativos de Windows**, con filtros por formato. Se puede importar y exportar WAV, MP3, AIFF/AIFC, AU/SND, CAF, Wave64, RF64, RAW/PCM, FLAC, WavPack, Ogg Vorbis, Opus, AAC/ADTS, M4A/AAC, AC3, AMR de banda estrecha, WMA v2, MP2, Matroska/FLAC y WebM/Opus. También se puede extraer la primera pista de audio de archivos compatibles con FFmpeg (por ejemplo MP4 y MKV); las pistas con más de dos canales se mezclan a estéreo. No se importan proyectos AUP/AUP3 ni archivos MIDI.
+
+La exportación permite elegir frecuencia, canales y, según el formato, bitrate, profundidad PCM o compresión sin pérdida. AMR se exporta a 8 kHz mono, Opus/WebM y AC3 a 48 kHz; los otros codificadores con frecuencias discretas usan 44,1 kHz en el diálogo. RAW pide codificación, frecuencia y canales al abrir y guardar. El documento en memoria conserva su formato. Se muestra progreso de guardado y se puede cancelar; el archivo anterior se sustituye solo al completar correctamente la exportación. No se conservan metadatos ni carátulas de los originales.
+
+Para los formatos adicionales se distribuyen ffmpeg.exe y ffprobe.exe en **codecs/**. Antes del primer despliegue desde el código fuente, ejecutar `./setup-codecs.ps1` (requiere 7-Zip); verifica el SHA256 del archivo descargado. `build.ps1 -Deploy` y `package.ps1` incluyen las herramientas y sus licencias. WAV y MP3 siguen usando los códecs propios.
+
+Al abrir un archivo de audio aparece una barra de progreso con el nombre del archivo y el porcentaje de carga. Incluye la lectura/decodificación y la preparación de la forma de onda, realizadas en segundo plano. **Cancelar** interrumpe la carga sin modificar los documentos abiertos. También se muestra al cargar archivos arrastrándolos al editor.
 
 La carga evita copias completas innecesarias y Play utiliza las muestras directamente cuando la salida admite float32, con compatibilidad PCM16. El primer clic reinicia también una reproducción que acaba de terminar, aunque el temporizador aún no haya limpiado su estado. Si se cambia el cursor o la selección mientras suena audio, Play en los controles comunes reinicia desde el nuevo tramo con una sola pulsación. La barra común incluye Ir al inicio e Ir al final (Home/End) y prescinde del botón de bucle. Mediciones y alcance de las pruebas: [rendimiento de audio](docs/rendimiento-audio.md).
 
-Usar **Archivo → Abrir audio** para cargar WAV o MP3. Para convertir un WAV a MP3, usar **Archivo → Guardar como** y elegir **Audio MP3**; al cambiar el filtro se adapta la extensión. Al guardar se pide la calidad, con 192 kbps como valor inicial. Guardar un documento abierto desde MP3 conserva ese formato y permite elegir de nuevo la calidad.
+Usar **Archivo → Abrir audio** para seleccionar uno o varios archivos; cada archivo abre su propio MDI. Para convertir un WAV a MP3, usar **Archivo → Guardar como** y elegir **Audio MP3**; al cambiar el filtro se adapta la extensión. Al guardar se pide la calidad, con 192 kbps como valor inicial. Guardar un documento abierto desde MP3 conserva ese formato y permite elegir de nuevo la calidad.
 
 La exportación conserva 32.000, 44.100 o 48.000 Hz. Para otras frecuencias, LAME convierte a 44.100 Hz tras avisar al usuario; el documento en memoria no se remuestrea. La exportación codifica el audio editado completo y no conserva etiquetas ID3 ni carátulas. MP3 usa compresión con pérdida; para evitar sucesivas recodificaciones, conservar un original WAV cuando sea necesario.
 
@@ -159,21 +167,21 @@ Prueba de integración de la interfaz (con las DLL desplegadas):
 Start-Process .\out\bin\forgecraft.exe -ArgumentList '--smoke-test' -Wait
 ```
 
-`-Test` ejecuta las pruebas de audio y de interfaz. Genera `out/build/preview.png`, `out/build/minimized.png`, `out/build/process-dialog.png`, `out/build/process-dialog-eq.png`, `out/build/process-menu.png` y `out/build/effects-menu.png`. Comprueba edición, ventanas MDI (arrastre desde la barra de título, redimensionado por el borde con su cursor, minimizar al pie del área de trabajo y restaurar, activación al pulsar), la selección de la onda (se conserva al soltar, sus extremos se redimensionan con el cursor de flecha doble, arrastrarla fuera abre un documento y soltarla en otro módulo la inserta), copiar y cortar entre módulos, el menú contextual de Edición y la numeración de los documentos sin título, guardado MP3, los 37 procesos aplicados y deshechos desde sus menús, los controles de previsualización de los diálogos, cancelación de diálogo/trabajo y arrastre múltiple de WAV+MP3 sobre una forma de onda. La imagen muestra audio sintético de prueba. `--self-test` verifica conversión WAV/MP3, los cuatro bitrates, integridad fuera de selección, filtros antialias, posiciones de ecos, colas de reverberación, techo del limitador, duración/frecuencia al cambiar tiempo y tono, y el formato WAV de 8 bits con padding.
+`-Test` ejecuta las pruebas de audio y de interfaz. Genera `out/build/preview.png`, `out/build/minimized.png`, `out/build/process-dialog.png`, `out/build/process-dialog-eq.png`, `out/build/process-menu.png` y `out/build/effects-menu.png`. Comprueba edición, ventanas MDI (arrastre desde la barra de título, redimensionado por el borde con su cursor, minimizar al pie del área de trabajo y restaurar, activación al pulsar), la selección de la onda (se conserva al soltar, sus extremos se redimensionan con el cursor de flecha doble, arrastrarla fuera abre un documento y soltarla en otro módulo la inserta), copiar y cortar entre módulos, el menú contextual de Edición y la numeración de los documentos sin título, guardado MP3, los 37 procesos aplicados y deshechos desde sus menús, los controles de previsualización de los diálogos, cancelación de diálogo/trabajo y arrastre múltiple de WAV+MP3 sobre una forma de onda. La imagen muestra audio sintético de prueba. `--self-test` verifica exportación/reapertura de todos los formatos del catálogo, precisión sin pérdida y cancelación que conserva el destino, además de conversión WAV/MP3, los cuatro bitrates, integridad fuera de selección, filtros antialias, posiciones de ecos, colas de reverberación, techo del limitador, duración/frecuencia al cambiar tiempo y tono, y el formato WAV de 8 bits con padding.
 
 ## Empaquetar y publicar
 
 Con el ejecutable ya desplegado:
 
 ```powershell
-.\package.ps1 -Version 0.1.4
+.\package.ps1 -Version 0.1.5
 ```
 
-Genera `out/packages/forgecraft_0_1_4.zip` con el ejecutable, la hoja de estilo, las DLL, los plugins (`platforms`, `iconengines`, `imageformats`), los códecs MP3, las licencias y los textos de instalación, y escribe `out/packages/SHA256SUMS.txt`. Ese zip y el archivo de sumas son los dos assets que se adjuntan a la Release; los binarios no se guardan en el repositorio.
+Genera `out/packages/forgecraft_0_1_5.zip` con el ejecutable, la hoja de estilo, las DLL, los plugins (`platforms`, `iconengines`, `imageformats`), los códecs MP3, la carpeta `codecs` con FFmpeg y ffprobe, las licencias y los textos de instalación, y escribe `out/packages/SHA256SUMS.txt`. Ese zip y el archivo de sumas son los dos assets que se adjuntan a la Release; los binarios no se guardan en el repositorio.
 
 ## Alcance de esta versión
 
-Todavía no reproduce todas las funciones de Sound Forge 4.5. Pendientes: otros formatos, marcadores, automatización avanzada de curvas, grabación remota/sincronizada y plugins externos. Audio y deshacer se mantienen en memoria; límite de apertura de 512 MB por archivo y de 512 MB de audio decodificado para MP3. Los procesos limitan su resultado a 512 MB de muestras. El guardado WAV respeta la profundidad del documento: 8, 16, 24 bits o 32 float. Reproducción mediante la API waveOut de Windows; el medidor muestra picos de muestras, no true peak. No incorpora código, marcas gráficas ni recursos del programa original.
+Todavía no reproduce todas las funciones de Sound Forge 4.5. Pendientes: automatización avanzada de curvas, grabación remota/sincronizada y plugins externos. Audio y deshacer se mantienen en memoria; límite de apertura de 512 MB por archivo y de 512 MB de audio decodificado para MP3. Los procesos limitan su resultado a 512 MB de muestras. El guardado WAV respeta la profundidad del documento: 8, 16, 24 bits o 32 float. Reproducción mediante la API waveOut de Windows; el medidor muestra picos de muestras, no true peak. No incorpora código, marcas gráficas ni recursos del programa original.
 
 ## Licencia
 

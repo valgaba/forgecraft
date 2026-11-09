@@ -1,5 +1,5 @@
 param(
-    [string]$Version = '0.1.4',
+    [string]$Version = '0.1.5',
     [string]$SourceBin = ''
 )
 $ErrorActionPreference = 'Stop'
@@ -37,6 +37,15 @@ Copy-Item -LiteralPath (Join-Path $workspacePath 'svn\distribution\THIRD_PARTY_N
 Copy-Item -LiteralPath (Join-Path $workspacePath 'svn\distribution\README-WINDOWS.txt') -Destination (Join-Path $stage 'README.txt')
 foreach ($licenseFile in Get-ChildItem -LiteralPath (Join-Path $workspacePath 'svn\distribution\licenses') -File) {
     Copy-Item -LiteralPath $licenseFile.FullName -Destination $licenses
+}
+# Códecs de audio adicionales y avisos de la compilación distribuida.
+$codecRoot = Join-Path $PSScriptRoot 'svn\third_party\ffmpeg'
+if (!(Test-Path -LiteralPath (Join-Path $codecRoot 'bin\ffmpeg.exe')) -or !(Test-Path -LiteralPath (Join-Path $codecRoot 'bin\ffprobe.exe'))) { throw 'Falta FFmpeg. Ejecuta setup-codecs.ps1 antes de distribuir.' }
+$codecDestination = Join-Path $stage 'codecs'
+New-Item -ItemType Directory -Path $codecDestination -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $codecRoot 'bin\ffmpeg.exe'), (Join-Path $codecRoot 'bin\ffprobe.exe') -Destination $codecDestination -Force
+foreach ($notice in @('LICENSE.txt', 'NOTICE.md', 'BUILD-README.txt')) {
+    Copy-Item -LiteralPath (Join-Path $codecRoot $notice) -Destination (Join-Path $licenses ('FFmpeg-' + $notice)) -Force
 }
 $zip = Join-Path $packages ($packageName + '.zip')
 Compress-Archive -LiteralPath $stage -DestinationPath $zip -CompressionLevel Optimal -Force

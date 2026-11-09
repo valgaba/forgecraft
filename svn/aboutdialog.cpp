@@ -32,7 +32,7 @@ AboutDialog::AboutDialog(QWidget *parent) : QDialog(parent) {
     };
 
     auto *left = new QVBoxLayout; left->setSpacing(12); left->addStretch();
-    left->addWidget(label("Editor de audio para Windows, con la identidad visual de Radit. WAV PCM y float, MP3, 37 procesos y grabación.", "AboutDescription"));
+    left->addWidget(label("Editor de audio para Windows, con la identidad visual de Radit. WAV, MP3, FLAC, Ogg, Opus y otros formatos; 37 procesos y grabación.", "AboutDescription"));
     left->addSpacing(10);
     left->addWidget(label("Desarrollado por", "AboutMuted"));
     left->addWidget(label("Victor Algaba", "AboutAuthor"));
@@ -60,7 +60,7 @@ AboutDialog::AboutDialog(QWidget *parent) : QDialog(parent) {
     auto *right = new QVBoxLayout; right->setSpacing(8); right->addStretch();
     right->addSpacing(6);
     right->addWidget(label("Qt 6.7 · MinGW 11.2", "AboutMuted"));
-    right->addWidget(label("mpg123 · LAME", "AboutCredits"));
+    right->addWidget(label("mpg123 · LAME · FFmpeg", "AboutCredits"));
     right->addSpacing(6);
     right->addWidget(label("GNU GPL v3 o posterior", "AboutCredits"));
     right->addSpacing(8);

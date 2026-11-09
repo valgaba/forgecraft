@@ -26,3 +26,6 @@ Makefile.*
 
 # Registro de compilación generado por build.ps1
 /build.log
+
+# Códecs descargados por setup-codecs.ps1
+/svn/third_party/ffmpeg/bin/

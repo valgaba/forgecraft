@@ -16,6 +16,7 @@ struct Operation {
     QString id, menu, title, description;
     QVector<Parameter> parameters;
     bool wholeDocument = false;
+    bool previewAvailable = true;
 };
 struct Result {
     AudioData audio;

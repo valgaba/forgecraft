@@ -35,11 +35,15 @@
 #include <cstdio>
 
 int dspTests();
+int audioFormatTests();
+int audioFormatUiTests();
 int recordingTests();
 int recordingScopeTests();
 int inputMonitoringTests();
 int normalizerDialogTests();
 int previewLoopTests();
+int processPreviewTests();
+int processPresetTests();
 int loadingProgressTests();
 int loadingUiTests();
 int audioBenchmark();
@@ -107,12 +111,15 @@ static int selfTest() {
     protectedFile.open(QIODevice::ReadOnly); check(protectedFile.readAll() == "keep original", "failed MP3 export preserves existing file"); protectedFile.close();
     check(!a.write(protectedPath, error, 777), "unsupported MP3 bitrate rejected");
     Document doc; doc.data = a; doc.undo.push(new QUndoCommand("change")); check(!doc.undo.isClean(), "document dirty state"); doc.undo.undo(); check(doc.undo.isClean(), "document undo clean state");
+    failures += audioFormatTests();
     failures += dspTests();
     failures += recordingTests();
     failures += recordingScopeTests();
     failures += inputMonitoringTests();
     failures += normalizerDialogTests();
     failures += previewLoopTests();
+    failures += processPreviewTests();
+    failures += processPresetTests();
     failures += loadingProgressTests();
     failures += loadingUiTests();
     failures += playbackTests();
@@ -144,7 +151,7 @@ static void applyTheme(QApplication &app) {
 }
 
 int main(int argc, char **argv) {
-    QApplication app(argc, argv); app.setApplicationName("ForgeCraft"); app.setApplicationVersion("0.1.4"); app.setOrganizationName("ForgeCraft");
+    QApplication app(argc, argv); app.setApplicationName("ForgeCraft"); app.setApplicationVersion("0.1.5"); app.setOrganizationName("ForgeCraft");
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/ForgeCraftAppIcon.png")));
     applyTheme(app);
     if (app.arguments().contains("--benchmark-audio")) return audioBenchmark();
@@ -202,7 +209,7 @@ int main(int argc, char **argv) {
             ok &= opened != doc && opened->data.frames() == doc->data.frames() && opened->path == savedMp3;
             workspace->closeActiveSubWindow(); QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete); app.processEvents();
             QTimer effectResponder; effectResponder.setInterval(5); int responseMode = 0; bool processingFailure = false, canceledWork = false;
-            bool capturedDialog = false, capturedEq = false, previewControlsChecked = false, previewControlsOk = true;
+            bool capturedDialog = false, capturedEq = false, previewControlsChecked = false, previewControlsOk = true, previewMetersOk = true;
             QObject::connect(&effectResponder, &QTimer::timeout, &window, [&] {
                 auto *modal = QApplication::activeModalWidget(); if (!modal) return;
                 if (auto *progress = qobject_cast<QProgressDialog *>(modal)) {
@@ -211,6 +218,10 @@ int main(int argc, char **argv) {
                 }
                 if (auto *dialog = qobject_cast<QDialog *>(modal)) {
                     if (dialog->objectName() == "processDialog") {
+                        if (!dialog->property("normalizer").toBool()) for (const auto &op : Dsp::operations()) if (op.title == dialog->windowTitle()) {
+                            previewMetersOk &= bool(dialog->findChild<VuMeter *>("processPreviewMeters")) == op.previewAvailable;
+                            previewMetersOk &= bool(dialog->findChild<QPushButton *>("processPreview")) == op.previewAvailable;
+                        }
                         if (dialog->property("normalizer").toBool()) dialog->grab().save(QApplication::applicationDirPath() + "/../build/normalize-dialog.png");
                         if (!capturedDialog && responseMode == 0) { dialog->grab().save(QApplication::applicationDirPath() + "/../build/process-dialog.png"); capturedDialog = true; }
                         if (!capturedEq && dialog->windowTitle().contains("Graphic EQ")) { dialog->grab().save(QApplication::applicationDirPath() + "/../build/process-dialog-eq.png"); capturedEq = true; }
@@ -246,6 +257,8 @@ int main(int argc, char **argv) {
             std::printf("%s UI parameter cancel, %s UI processing cancel\n", parameterCancel ? "PASS" : "FAIL", workCancel ? "PASS" : "FAIL");
             ok &= previewControlsOk;
             std::printf("%s UI process dialog preview and bypass controls\n", previewControlsOk ? "PASS" : "FAIL");
+            ok &= previewMetersOk;
+            std::printf("%s UI process and effect preview meters follow operation availability\n", previewMetersOk ? "PASS" : "FAIL");
             auto *originalWindow = workspace->currentSubWindow(); int beforeDrop = workspace->subWindowList().size();
             QMimeData mime; mime.setUrls({QUrl::fromLocalFile(path), QUrl::fromLocalFile(savedMp3)});
             QDragEnterEvent enter(QPoint(20, 40), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier); QApplication::sendEvent(doc->wave, &enter);
@@ -678,6 +691,7 @@ int main(int argc, char **argv) {
             ok &= about->grab().save(QApplication::applicationDirPath() + "/../build/about.png");
             about->close(); app.processEvents();
             std::printf("%s UI: editing, MDI activation, cascade, tile, zoom, scroll, recording, close and render\n", ok ? "PASS" : "FAIL"); std::fflush(stdout);
+            ok &= audioFormatUiTests() == 0;
             app.exit(ok ? 0 : 1);
         });
         return app.exec();

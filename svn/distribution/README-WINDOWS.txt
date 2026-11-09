@@ -1,8 +1,8 @@
-ForgeCraft 0.1.4 — Windows de 64 bits
+ForgeCraft 0.1.5 — Windows de 64 bits
 =====================================
 
-1. Descomprime forgecraft_0_1_4.zip.
-2. Ejecuta forgecraft_0_1_4\forgecraft.exe.
+1. Descomprime forgecraft_0_1_5.zip.
+2. Ejecuta forgecraft_0_1_5\forgecraft.exe.
 
 No requiere instalación ni permisos de administrador. Se puede mover la carpeta completa a otra ubicación o a una unidad extraíble, pero hay que mantener juntos el ejecutable, las DLL, las carpetas de plugins y la hoja forgecraft.qss.
 
@@ -18,13 +18,14 @@ Contenido del paquete
 - platforms\                qwindows y qoffscreen (Qt).
 - iconengines\, imageformats\
                             Motor de iconos SVG y lector de SVG (Qt).
+- codecs\                   FFmpeg y ffprobe 9.0.2 (GPL 3), formatos adicionales.
 - licenses\                 Textos legales y avisos de terceros.
 - README.txt                Este archivo.
 - THIRD_PARTY_NOTICES.txt   Avisos de componentes de terceros.
 
 Requisitos
 ----------
-Windows 10 u 11 de 64 bits. La reproducción usa waveOut y la grabación waveIn, ambas del propio sistema. Para MP3 basta con las DLL incluidas: no hace falta instalar códecs, FFmpeg ni ningún reproductor.
+Windows 10 u 11 de 64 bits. La reproducción usa waveOut y la grabación waveIn, ambas del propio sistema. Para MP3 basta con las DLL incluidas: no hace falta instalar códecs ni ningún reproductor. Para los demás formatos se incluyen ffmpeg.exe y ffprobe.exe en codecs\. Mantén esa carpeta junto al editor.
 
 Si el programa no arranca, comprueba que la carpeta platforms esté junto al ejecutable: sin ella Qt no puede crear la ventana.
 

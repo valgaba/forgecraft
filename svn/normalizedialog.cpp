@@ -37,10 +37,8 @@ NormalizeDialog::NormalizeDialog(const AudioData &audio, qint64 a, qint64 b, con
     setObjectName("processDialog"); setProperty("normalizer", true);
     setWindowTitle("Normalizar — " + name);
     auto *root = new QHBoxLayout(this); root->setContentsMargins(12, 12, 12, 10); root->setSpacing(12);
-    auto *content = new QVBoxLayout; root->addLayout(content, 1);
-    auto *nameRow = new QHBoxLayout;
-    nameRow->addWidget(new QLabel("Nombre:"));
-    presets = new QComboBox; presets->setObjectName("normalizePresets"); nameRow->addWidget(presets, 1); content->addLayout(nameRow);
+    auto *content = new QVBoxLayout; content->setAlignment(Qt::AlignTop); root->addLayout(content, 1);
+    presets = new QComboBox; presets->setObjectName("normalizePresets"); presets->setAccessibleName("Preset de normalización"); content->addWidget(presets);
     auto *panel = new QGroupBox("Normalización"); panel->setObjectName("normalizePanel"); content->addWidget(panel);
     auto *panelLayout = new QVBoxLayout(panel);
     auto *modeRow = new QHBoxLayout; modeRow->addWidget(new QLabel("Normalizar usando:"));
@@ -86,6 +84,7 @@ NormalizeDialog::NormalizeDialog(const AudioData &audio, qint64 a, qint64 b, con
     auto *buttons = new QVBoxLayout; root->addLayout(buttons);
     auto makeButton = [&](const QString &text, const QString &object = QString()) { auto *button = new QPushButton(text); button->setObjectName(object); button->setAutoDefault(false); buttons->addWidget(button); return button; };
     auto *ok = makeButton("Aceptar", "processApply"); ok->setDefault(true);
+    presets->setFixedHeight(ok->sizeHint().height());
     auto *cancel = makeButton("Cancelar", "processCancel");
     buttons->addSpacing(8);
     auto *save = makeButton("Guardar como…", "normalizeSavePreset"); deletePreset = makeButton("Eliminar preset", "normalizeDeletePreset"); buttons->addSpacing(8);

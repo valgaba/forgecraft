@@ -1,5 +1,6 @@
 #include "audio.h"
 #include "mp3.h"
+#include "audioformats.h"
 #include <QFile>
 #include <QSaveFile>
 #include <QtEndian>
@@ -15,6 +16,7 @@ static void put32(QByteArray &b, quint32 n) { char p[4]; qToLittleEndian(n, p); 
 bool AudioData::read(const QString &path, AudioData &out, QString &error, const ReadProgress &progress) {
     error.clear();
     if (path.endsWith(".mp3", Qt::CaseInsensitive)) return Mp3::read(path, out, error, progress);
+    if (!path.endsWith(".wav", Qt::CaseInsensitive) && !path.endsWith(".wave", Qt::CaseInsensitive)) return AudioFormats::read(path, out, error, progress);
     auto report = [&](int percent) { if (progress && !progress(percent)) { error = "Carga cancelada."; return false; } return true; };
     if (!report(0)) return false;
     QFile file(path);
@@ -75,9 +77,12 @@ bool AudioData::read(const QString &path, AudioData &out, QString &error, const 
     out = std::move(result); return true;
 }
 
-bool AudioData::write(const QString &path, QString &error, int mp3Bitrate) const {
+bool AudioData::write(const QString &path, QString &error, int mp3Bitrate, const ReadProgress &progress) const {
     error.clear();
-    if (path.endsWith(".mp3", Qt::CaseInsensitive)) return Mp3::write(*this, path, mp3Bitrate, error);
+    if (path.endsWith(".mp3", Qt::CaseInsensitive)) return Mp3::write(*this, path, mp3Bitrate, error, progress);
+    if (!path.endsWith(".wav", Qt::CaseInsensitive) && !path.endsWith(".wave", Qt::CaseInsensitive)) { AudioExportOptions options; options.bitrate = mp3Bitrate; return AudioFormats::write(*this, path, options, error, progress); }
+    auto report = [&](int value) { if (progress && !progress(value)) { error = "Guardado cancelado."; return false; } return true; };
+    if (!report(0)) return false;
     const int bits = floatFormat ? 32 : (bitDepth == 8 ? 8 : bitDepth == 24 ? 24 : bitDepth == 32 ? 32 : 16);
     const int bytesPerSample = bits / 8;
     const quint16 format = floatFormat ? 3 : 1;
@@ -86,7 +91,9 @@ bool AudioData::write(const QString &path, QString &error, int mp3Bitrate) const
     QByteArray b("RIFF"); put32(b, 36 + dataSize + (dataSize & 1)); b += "WAVEfmt "; put32(b, 16);
     put16(b, format); put16(b, channels); put32(b, rate); put32(b, rate * channels * bytesPerSample);
     put16(b, channels * bytesPerSample); put16(b, bits); b += "data"; put32(b, dataSize);
+    qsizetype at = 0;
     for (float f : samples) {
+        if ((at++ & 16383) == 0 && !report(int(at * 99 / qMax(qsizetype(1), samples.size())))) return false;
         const double v = std::clamp(double(f), -1.0, 1.0);
         if (bits == 8) b.append(char(int(std::clamp(std::lround(v * 128) + 128, 0l, 255l))));
         else if (bits == 16) put16(b, quint16(qint16(std::lround(v * 32767))));
@@ -100,6 +107,7 @@ bool AudioData::write(const QString &path, QString &error, int mp3Bitrate) const
         } else put32(b, quint32(qint32(std::lround(v * 2147483647.0))));
     }
     if (dataSize & 1) b.append(char(0));
+    if (!report(100)) return false;
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly) || file.write(b) != b.size() || !file.commit()) { error = file.errorString(); return false; }
     return true;

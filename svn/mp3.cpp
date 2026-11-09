@@ -130,8 +130,10 @@ bool Mp3::read(const QString &path, AudioData &out, QString &error, const AudioD
     out = std::move(result); return true;
 }
 
-bool Mp3::write(const AudioData &audio, const QString &path, int bitrate, QString &error) {
+bool Mp3::write(const AudioData &audio, const QString &path, int bitrate, QString &error, const AudioData::ReadProgress &progress) {
     error.clear();
+    auto report = [&](int value) { if (progress && !progress(value)) { error = "Guardado cancelado."; return false; } return true; };
+    if (!report(0)) return false;
     if (!audio.frames() || (audio.channels != 1 && audio.channels != 2)) { error = "No hay audio para guardar en MP3."; return false; }
     if (bitrate != 128 && bitrate != 192 && bitrate != 256 && bitrate != 320) { error = "Selecciona 128, 192, 256 o 320 kbps."; return false; }
     Encoder api; if (!api.load(error)) return false;
@@ -156,6 +158,7 @@ bool Mp3::write(const AudioData &audio, const QString &path, int bitrate, QStrin
         return true;
     };
     for (qint64 frame = 0; frame < audio.frames(); frame += 8192) {
+        if (!report(int(frame * 99 / audio.frames()))) return false;
         int count = int(qMin(qint64(8192), audio.frames() - frame));
         const float *pcm = audio.samples.constData() + frame * audio.channels;
         int written = audio.channels == 2 ? api.lame_encode_buffer_interleaved_ieee_float(handle, pcm, count, buffer, sizeof(buffer))
@@ -168,6 +171,7 @@ bool Mp3::write(const AudioData &audio, const QString &path, int bitrate, QStrin
         error = "No se pudo finalizar la cabecera de duración MP3."; return false;
     }
     if (!writeChunk(int(tagSize))) return false;
+    if (!report(100)) return false;
     if (!file.commit()) { error = file.errorString(); return false; }
     return true;
 }

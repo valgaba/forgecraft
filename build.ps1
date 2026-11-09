@@ -69,6 +69,15 @@ try {
         $licenses = Join-Path $Destination 'licenses'
         New-Item -ItemType Directory -Path $licenses -Force | Out-Null
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'svn\third_party\mp3\licenses\COPYING.txt'), (Join-Path $PSScriptRoot 'svn\third_party\mp3\NOTICE.md') -Destination $licenses -Force
+        # Códecs de audio adicionales y avisos de la compilación distribuida.
+        $codecRoot = Join-Path $PSScriptRoot 'svn\third_party\ffmpeg'
+        if (!(Test-Path -LiteralPath (Join-Path $codecRoot 'bin\ffmpeg.exe')) -or !(Test-Path -LiteralPath (Join-Path $codecRoot 'bin\ffprobe.exe'))) { throw 'Falta FFmpeg. Ejecuta setup-codecs.ps1 antes de distribuir.' }
+        $codecDestination = Join-Path $Destination 'codecs'
+        New-Item -ItemType Directory -Path $codecDestination -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $codecRoot 'bin\ffmpeg.exe'), (Join-Path $codecRoot 'bin\ffprobe.exe') -Destination $codecDestination -Force
+        foreach ($notice in @('LICENSE.txt', 'NOTICE.md', 'BUILD-README.txt')) {
+            Copy-Item -LiteralPath (Join-Path $codecRoot $notice) -Destination (Join-Path $licenses ('FFmpeg-' + $notice)) -Force
+        }
         $platforms = Join-Path $Destination 'platforms'
         New-Item -ItemType Directory -Path $platforms -Force | Out-Null
         foreach ($dll in @('qwindows.dll', 'qoffscreen.dll')) {
