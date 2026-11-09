@@ -1,4 +1,4 @@
-# ForgeCraft 0.1.5
+# ForgeCraft 0.1.6
 
 Editor de audio para Windows, inspirado en la estética y el flujo de los editores clásicos como Sound Forge 4.5. Implementación propia en **Qt Widgets 6.7.0, C++17 y MinGW 11.2 de 64 bits**, el mismo kit configurado en Radit.
 
@@ -17,7 +17,7 @@ Editor de audio para Windows, inspirado en la estética y el flujo de los editor
 
 ## Descarga
 
-[Descargar ForgeCraft 0.1.5 para Windows de 64 bits](https://github.com/valgaba/forgecraft/releases/download/forgecraft-0.1.5/forgecraft_0_1_5.zip). Descomprimir `forgecraft_0_1_5.zip` y ejecutar `forgecraft_0_1_5\forgecraft.exe`. No requiere instalación. El paquete incluye las DLL de Qt, los plugins, los códecs MP3, la hoja de estilo y las licencias; los detalles están en `README.txt` del propio paquete. La [página de la versión](https://github.com/valgaba/forgecraft/releases/tag/forgecraft-0.1.5) incluye la suma SHA256.
+[Descargar ForgeCraft 0.1.6 para Windows de 64 bits](https://github.com/valgaba/forgecraft/releases/download/forgecraft-0.1.6/forgecraft_0_1_6.zip). Descomprimir `forgecraft_0_1_6.zip` y ejecutar `forgecraft_0_1_6\forgecraft.exe`. No requiere instalación. El paquete incluye las DLL de Qt, los plugins, los códecs MP3, la hoja de estilo y las licencias; los detalles están en `README.txt` del propio paquete. La [página de la versión](https://github.com/valgaba/forgecraft/releases/tag/forgecraft-0.1.6) incluye la suma SHA256.
 
 ## Estructura
 
@@ -77,7 +77,7 @@ Los valores de la hoja están ampliados respecto a Radit (barra de desplazamient
 
 - Ventanas de audio MDI superpuestas, con cascada y mosaico, con módulos de marco propio (barra de título con minimizar y cerrar, y bordes redimensionables).
 - Interfaz oscura con la identidad visual de Radit: superficies planas, acento `#80A4AE` y formas de onda sobre lienzo oscuro con reglas de tiempo por documento.
-- Los dos vúmetros estéreo horizontales están en el extremo derecho de la barra superior de **Archivo y edición**, con barras de hasta 380 píxeles, escala logarítmica de −60 a 0 dBFS y animación independiente a unos 60 fotogramas por segundo: un icono de **micrófono** identifica la entrada, que se mide continuamente aunque no se esté grabando, sin almacenar audio y otro de **altavoz** la salida de reproducción y previsualización. Ambos usan el estilo y el color de los iconos de Radit. **Ver → Vúmetros** permite mostrarlos u ocultarlos. La barra de transporte inferior es común a todos los documentos. **Opciones → Opciones generales…** (Ctrl+,) permite elegir el **dispositivo de salida** (con un botón **Probar** que reproduce un tono) y el **dispositivo de grabación**; ambos se guardan para las próximas sesiones.
+- Los dos vúmetros estéreo horizontales están en el extremo derecho de la barra superior de **Archivo y edición**, con barras de hasta 380 píxeles, escala logarítmica de −60 a 0 dBFS y animación independiente a unos 60 fotogramas por segundo: un icono de **micrófono** identifica la entrada, que se mide continuamente aunque no se esté grabando, sin almacenar audio y otro de **altavoz** la salida de reproducción y previsualización. Ambos usan el estilo y el color de los iconos de Radit. Los iconos son botones de **mute** independientes: el micrófono silencia la entrada (durante la grabación se acumulan ceros, manteniendo su duración) y el altavoz silencia reproducción y preescucha sin detenerlas. Un segundo clic recupera la señal; una marca roja indica el mute. Se conserva el volumen previo de salida y el estado de mute al parar o cambiar de MDI. **Ver → Vúmetros** permite mostrarlos u ocultarlos. La barra de transporte inferior es común a todos los documentos. **Opciones → Opciones generales…** (Ctrl+,) permite elegir el **dispositivo de salida** (con un botón **Probar** que reproduce un tono) y el **dispositivo de grabación**; ambos se guardan para las próximas sesiones.
 - Abrir WAV mono/estéreo PCM 8, 16, 24 y 32 bits, o float de 32 bits.
 - Abrir MP3 mono/estéreo, incluidos archivos con bitrate variable.
 - **Nuevo** abre un cuadro con frecuencia (8.000 a 192.000 Hz), profundidad (8, 16, 24 bits o 32 float), canales (mono/estéreo) y el tiempo máximo de edición; el documento se crea con ese formato.
@@ -174,10 +174,10 @@ Start-Process .\out\bin\forgecraft.exe -ArgumentList '--smoke-test' -Wait
 Con el ejecutable ya desplegado:
 
 ```powershell
-.\package.ps1 -Version 0.1.5
+.\package.ps1 -Version 0.1.6
 ```
 
-Genera `out/packages/forgecraft_0_1_5.zip` con el ejecutable, la hoja de estilo, las DLL, los plugins (`platforms`, `iconengines`, `imageformats`), los códecs MP3, la carpeta `codecs` con FFmpeg y ffprobe, las licencias y los textos de instalación, y escribe `out/packages/SHA256SUMS.txt`. Ese zip y el archivo de sumas son los dos assets que se adjuntan a la Release; los binarios no se guardan en el repositorio.
+Genera `out/packages/forgecraft_0_1_6.zip` con el ejecutable, la hoja de estilo, las DLL, los plugins (`platforms`, `iconengines`, `imageformats`), los códecs MP3, la carpeta `codecs` con FFmpeg y ffprobe, las licencias y los textos de instalación, y escribe `out/packages/SHA256SUMS.txt`. Ese zip y el archivo de sumas son los dos assets que se adjuntan a la Release; los binarios no se guardan en el repositorio.
 
 ## Alcance de esta versión
 

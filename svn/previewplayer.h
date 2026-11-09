@@ -15,6 +15,7 @@ public:
     ~PreviewPlayer() override;
     bool start(const AudioData &audio, quint32 device, QString &error);
     bool updateAudio(const AudioData &audio, QString &error);
+    bool setMuted(bool muted);
     void stop();
     bool active() const;
     std::function<void(double, double)> levels;
@@ -30,6 +31,7 @@ private:
     std::atomic<quint64> generation{0};
     AudioData current, previous, pending;
     bool hasPending = false;
+    bool muted = false; // Se accede solo desde el hilo de audio.
     qint64 position = 0;
     int fadeLeft = 0, fadeFrames = 0;
     void pump();

@@ -151,11 +151,15 @@ static void applyTheme(QApplication &app) {
 }
 
 int main(int argc, char **argv) {
-    QApplication app(argc, argv); app.setApplicationName("ForgeCraft"); app.setApplicationVersion("0.1.5"); app.setOrganizationName("ForgeCraft");
+    QApplication app(argc, argv); app.setApplicationName("ForgeCraft"); app.setApplicationVersion("0.1.6"); app.setOrganizationName("ForgeCraft");
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/ForgeCraftAppIcon.png")));
     applyTheme(app);
     if (app.arguments().contains("--benchmark-audio")) return audioBenchmark();
     if (app.arguments().contains("--self-test")) return selfTest();
+    if (app.arguments().contains("--mute-test")) {
+        const int failures = inputMonitoringTests() + previewLoopTests() + playbackTests();
+        std::printf("%d failure(s)\n", failures); return failures ? 1 : 0;
+    }
     if (app.arguments().contains("--smoke-test")) app.setAttribute(Qt::AA_DontUseNativeDialogs);
     MainWindow window({}, !app.arguments().contains("--smoke-test")); window.show();
     if (app.arguments().contains("--smoke-test")) {

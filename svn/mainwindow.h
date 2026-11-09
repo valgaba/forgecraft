@@ -138,6 +138,10 @@ private:
     QMdiArea *workspace;
     VuMeter *inputVu = nullptr;
     VuMeter *outputVu = nullptr;
+    QToolButton *inputMuteButton = nullptr, *outputMuteButton = nullptr;
+    bool inputMuted = false, outputMuted = false;
+    void setInputMuted(bool muted);
+    void setOutputMuted(bool muted);
     QPointer<VuMeter> previewVu;
     QLabel *positionLabel, *formatLabel, *selectionLabel;
     QTimer timer;

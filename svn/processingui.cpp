@@ -78,7 +78,9 @@ bool MainWindow::playLivePreview(const AudioData &audio, std::function<void()> f
     if (livePreview && livePreview->active()) return livePreview->updateAudio(audio, error);
     stopPlayback();
     if (!livePreview) livePreview = std::make_unique<PreviewPlayer>();
+    if (!livePreview->setMuted(outputMuted)) { error = "El dispositivo no permite silenciar la preescucha."; return false; }
     livePreview->levels = [this](double left, double right) {
+        if (outputMuted) left = right = 0;
         if (outputVu) outputVu->setLevels(left, right);
         if (previewVu) previewVu->setLevels(left, right);
     };

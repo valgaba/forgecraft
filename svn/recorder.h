@@ -11,6 +11,7 @@ struct RecordingDevice { quint32 id; QString name; };
 struct CaptureBuffer {
     AudioData audio;
     bool dcAdjust = false;
+    bool muted = false;
     qint64 limitFrames = 0;
     double peaks[2] = {0, 0};
     double previousInput[2] = {0, 0}, previousOutput[2] = {0, 0};

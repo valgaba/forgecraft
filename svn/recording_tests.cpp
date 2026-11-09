@@ -152,18 +152,54 @@ int inputMonitoringTests() {
     for (int y = 13; y < liveInput.height(); ++y) for (int x = 1; x < liveInput.width() - 1; ++x)
         visibleLevel |= liveInput.pixelColor(x, y) == Theme::Accent;
     check(visibleLevel, "input meter moves while not recording");
+    auto *mute = window.findChild<QToolButton *>("inputMute");
+    auto *outputMute = window.findChild<QToolButton *>("outputMute");
+    check(mute && outputMute && mute->isCheckable() && outputMute->isCheckable(), "meter icons are independent mute buttons");
+    if (!mute || !outputMute) return failures;
+    const int startsBeforeMute = counters.starts, stopsBeforeMute = counters.stops;
+    mute->click(); wait(60);
+    check(mute->isChecked() && window.inputMuted && source->buffer.muted && source->active()
+        && source->buffer.peaks[0] == 0 && source->buffer.peaks[1] == 0 && counters.starts == startsBeforeMute && counters.stops == stopsBeforeMute
+        && !outputMute->isChecked(), "microphone click silences input without reopening it or muting output");
+    outputMute->click();
+    check(window.outputMuted && window.inputMuted && outputMute->isChecked(), "both mute controls can be active independently");
+    auto hasMuteMark = [](QToolButton *button) {
+        const QImage icon = button->icon().pixmap(QSize(20, 20), QIcon::Normal, QIcon::On).toImage();
+        int red = 0;
+        for (int y = 0; y < icon.height(); ++y) for (int x = 0; x < icon.width(); ++x) {
+            const QColor color = icon.pixelColor(x, y); red += color.alpha() > 100 && color.red() > 180 && color.green() < 150;
+        }
+        return red > 10;
+    };
+    check(hasMuteMark(mute) && hasMuteMark(outputMute), "muted icons display the red slash");
+    if (auto *panel = window.findChild<QFrame *>("commonVuMeters")) panel->grab().save(QApplication::applicationDirPath() + "/../build/mute-controls.png");
+    outputMute->click();
+    mute->click(); wait(60);
+    check(!window.inputMuted && source->buffer.peaks[0] > .1, "second microphone click restores live input");
     window.stopPlayback(); wait(60);
     check(source->active() && source->buffer.audio.frames() == 0, "stopping playback leaves input monitoring running");
     window.addDocument(AudioData{});
     auto *document = window.current();
     window.startRecording(); wait(90);
+    check(counters.recording && source->buffer.audio.frames() > 0, "recording switches the same input to take accumulation");
+    const auto beforeMute = source->buffer.audio.samples;
+    mute->click(); wait(70);
+    const auto mutedSamples = source->buffer.audio.samples;
+    bool silence = mutedSamples.size() > beforeMute.size();
+    for (qsizetype i = beforeMute.size(); i < mutedSamples.size(); ++i) silence &= mutedSamples[i] == 0;
+    check(silence && mutedSamples.first(beforeMute.size()) == beforeMute && source->active() && window.recording,
+        "input mute records silence while preserving previous samples and capture timing");
+    mute->click(); wait(70);
+    bool recovered = false;
+    for (qsizetype i = mutedSamples.size(); i < source->buffer.audio.samples.size(); ++i) recovered |= std::abs(source->buffer.audio.samples[i]) > .1;
+    check(recovered && source->active(), "unmute resumes recording real samples in the same take");
     const qint64 takeFrames = source->buffer.audio.frames();
-    check(counters.recording && takeFrames > 0, "recording switches the same input to take accumulation");
     window.stopRecording(); wait(60);
     check(source->active() && !counters.recording && source->buffer.audio.frames() == 0
         && document->data.frames() == takeFrames, "stopping recording resumes monitoring without extending the take");
-    source->stop(); window.inputDevice = 123; window.startInputMonitor(); wait(30);
-    check(source->active() && counters.device == 123 && !counters.recording, "monitoring reopens the selected input device");
+    mute->click(); source->stop(); window.inputDevice = 123; window.startInputMonitor(); wait(30);
+    check(source->active() && counters.device == 123 && !counters.recording && source->buffer.muted && source->buffer.peaks[0] == 0, "monitoring reopens the selected input device and preserves mute");
+    mute->click();
     document->undo.setClean(); window.close(); wait(20);
     check(!source->active(), "closing the application releases the input device");
 

@@ -1,4 +1,5 @@
 #include "previewplayer.h"
+#include "waveoutputmute.h"
 #include <array>
 #include <algorithm>
 #include <cmath>
@@ -17,6 +18,7 @@
 struct PreviewPlayer::Native {
 #ifdef Q_OS_WIN
     HWAVEOUT handle = nullptr;
+    WaveOutputMute mute;
     struct Block { WAVEHDR header{}; QByteArray bytes; double peaks[2]{}; bool prepared = false; };
     std::array<Block, 4> blocks;
     int next = 0, frames = 0;
@@ -51,7 +53,18 @@ bool PreviewPlayer::updateAudio(const AudioData &audio, QString &error) {
 void PreviewPlayer::stop() {
     QMetaObject::invokeMethod(worker, [this] { stopOutput(); }, Qt::BlockingQueuedConnection);
 }
+bool PreviewPlayer::setMuted(bool value) {
+    bool ok = true;
+    QMetaObject::invokeMethod(worker, [&] {
+#ifdef Q_OS_WIN
+        ok = native->mute.set(native->handle, value);
+#endif
+        if (ok) muted = value;
+    }, Qt::BlockingQueuedConnection);
+    return ok;
+}
 void PreviewPlayer::postLevels(double left, double right) {
+    if (muted) left = right = 0;
     const auto token = generation.load();
     QMetaObject::invokeMethod(this, [this, left, right, token] {
         if (token == generation.load() && levels) levels(left, right);
@@ -72,6 +85,7 @@ bool PreviewPlayer::startOutput(const AudioData &audio, quint32 device, QString 
     native->floating = true; auto code = open();
     if (code == WAVERR_BADFORMAT) { native->handle = nullptr; native->floating = false; code = open(); }
     if (code != MMSYSERR_NOERROR) { native->handle = nullptr; stopOutput(); error = "No se pudo abrir la salida de preescucha (" + QString::number(code) + ")."; return false; }
+    if (!native->mute.set(native->handle, muted)) { stopOutput(); error = "El dispositivo no permite silenciar la preescucha."; return false; }
     native->next = 0; native->underruns = 0; native->frames = qMax(1, audio.rate / 50);
     waveOutPause(native->handle);
     for (int i = 0; i < int(native->blocks.size()); ++i) {
@@ -152,6 +166,7 @@ void PreviewPlayer::stopOutput() {
 #ifdef Q_OS_WIN
     if (native->handle) {
         waveOutReset(native->handle);
+        native->mute.set(native->handle, false);
         for (auto &block : native->blocks) if (block.prepared) { waveOutUnprepareHeader(native->handle, &block.header, sizeof(WAVEHDR)); block.prepared = false; }
         waveOutClose(native->handle); native->handle = nullptr;
     }
@@ -177,14 +192,25 @@ int previewLoopTests() {
     int meterUpdates = 0; player.levels = [&](double, double) { ++meterUpdates; };
     wait(); const auto handle = snapshot().handle; const qint64 before = snapshot().position;
     check(player.active() && before > silence.frames() * 2 && meterUpdates > 3, "repeats beyond the fragment and feeds meters continuously");
+    DWORD originalVolume = 0, actualVolume = 1;
+    waveOutGetVolume(handle, &originalVolume);
+    bool muted = player.setMuted(true); wait(); waveOutGetVolume(handle, &actualVolume);
+    check(muted && actualVolume == 0 && player.active() && snapshot().handle == handle && snapshot().position > before,
+        "mute silences preview without stopping its position or reopening the device");
+    bool unmuted = player.setMuted(false); waveOutGetVolume(handle, &actualVolume);
+    check(unmuted && actualVolume == originalVolume && player.active() && snapshot().handle == handle, "unmute restores the preview volume on the same device");
     check(player.updateAudio(silence, error), "accepts a new preview buffer while playing"); wait();
     check(player.active() && snapshot().handle == handle && snapshot().position > before, "updates preserve the output device and playback position");
     AudioData incompatible = silence; incompatible.rate = 48000;
     check(!player.updateAudio(incompatible, error) && player.active(), "invalid updates preserve the running preview");
     player.stop(); check(!player.active(), "explicit Stop releases the continuous output");
     AudioData longPreview; longPreview.samples.fill(0, 44100 * 2 * 15);
+    player.setMuted(true);
     check(player.start(longPreview, WAVE_MAPPER, error) && snapshot().samples == longPreview.samples.constData(),
         "filling long preview blocks does not detach or copy the shared audio");
+    waveOutGetVolume(snapshot().handle, &actualVolume);
+    check(actualVolume == 0 && player.active(), "new preview streams inherit mute before queuing audio");
+    player.setMuted(false);
     const auto beforeGuiStall = snapshot();
     QThread::msleep(200);  // Simula pintura, sliders o cualquier bloqueo de la interfaz.
     const auto afterGuiStall = snapshot();

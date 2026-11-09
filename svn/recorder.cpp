@@ -32,7 +32,7 @@ bool CaptureBuffer::consume(const char *pcm, qsizetype bytes, bool store) {
     for (qint64 f = 0; f < frames; ++f) for (int c = 0; c < audio.channels; ++c) {
         double x = qint16(qFromLittleEndian<quint16>(pcm + (f * audio.channels + c) * 2)) / 32768.0;
         double filtered = x - previousInput[c] + pole * previousOutput[c]; previousInput[c] = x; previousOutput[c] = filtered;
-        double y = std::clamp(dcAdjust ? filtered : x, -1.0, 1.0);
+        double y = muted ? 0 : std::clamp(dcAdjust ? filtered : x, -1.0, 1.0);
         peaks[c] = qMax(peaks[c], std::abs(y));
         if (f < count) dst[f * audio.channels + c] = float(y);
     }

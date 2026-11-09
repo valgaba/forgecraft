@@ -7,6 +7,7 @@
 #include "optionsdialog.h"
 #include "recorder.h"
 #include "previewplayer.h"
+#include "waveoutputmute.h"
 #include "theme.h"
 #include <QApplication>
 #include <QActionGroup>
@@ -78,6 +79,7 @@ static QString timeText(qint64 frame, int rate);   // definida más abajo
 struct MainWindow::Playback {
 #ifdef Q_OS_WIN
     HWAVEOUT handle = nullptr;
+    WaveOutputMute mute;
     WAVEHDR header{};
 #endif
     QByteArray bytes;
@@ -439,20 +441,30 @@ MainWindow::MainWindow(std::function<Recorder *()> source, bool monitorInput) : 
     auto *meterLayout = new QHBoxLayout(meterPanel);
     meterLayout->setContentsMargins(8, 0, 0, 0);
     meterLayout->setSpacing(6);
-    auto meterIcon = [](const QString &name, const QString &description) {
-        auto *label = new QLabel;
-        label->setPixmap(Theme::icon(name).pixmap(20, 20));
-        label->setFixedSize(24, 24); label->setAlignment(Qt::AlignCenter);
-        label->setAccessibleName(description); label->setToolTip(description);
-        return label;
+    auto meterIcon = [](const QString &name, const QString &description, const QString &objectName) {
+        auto *button = new QToolButton;
+        QIcon icon;
+        QPixmap normal = Theme::icon(name).pixmap(20, 20);
+        icon.addPixmap(normal, QIcon::Normal, QIcon::Off);
+        QPixmap crossed = normal;
+        { QPainter painter(&crossed); painter.setRenderHint(QPainter::Antialiasing); painter.setPen(QPen(QColor("#ef6666"), 2.5)); painter.drawLine(2, 18, 18, 2); }
+        icon.addPixmap(crossed, QIcon::Normal, QIcon::On); icon.addPixmap(crossed, QIcon::Active, QIcon::On);
+        button->setObjectName(objectName); button->setIcon(icon); button->setIconSize(QSize(20, 20));
+        button->setFixedSize(24, 24); button->setCheckable(true); button->setAutoRaise(true);
+        button->setAccessibleName(description); button->setToolTip(description);
+        return button;
     };
-    meterLayout->addWidget(meterIcon("microphone", "Entrada: micrófono / grabación"));
+    inputMuteButton = meterIcon("microphone", "Silenciar entrada", "inputMute");
+    connect(inputMuteButton, &QToolButton::toggled, this, &MainWindow::setInputMuted);
+    meterLayout->addWidget(inputMuteButton);
     inputVu = new VuMeter; inputVu->setObjectName("inputVu");
     inputVu->setFixedHeight(28); inputVu->setMinimumWidth(220); inputVu->setMaximumWidth(380);
     inputVu->setToolTip("Entrada L/R continua · escala de −60 a 0 dBFS");
     meterLayout->addWidget(inputVu);
     meterLayout->addSpacing(8);
-    meterLayout->addWidget(meterIcon("speaker", "Salida: altavoz / reproducción"));
+    outputMuteButton = meterIcon("speaker", "Silenciar salida", "outputMute");
+    connect(outputMuteButton, &QToolButton::toggled, this, &MainWindow::setOutputMuted);
+    meterLayout->addWidget(outputMuteButton);
     outputVu = new VuMeter; outputVu->setObjectName("outputVu");
     outputVu->setFixedHeight(28); outputVu->setMinimumWidth(220); outputVu->setMaximumWidth(380);
     outputVu->setToolTip("Salida L/R de reproducción y previsualización · escala de −60 a 0 dBFS");
@@ -863,13 +875,40 @@ bool MainWindow::playTestTone(quint32 device) {
 }
 // Grabación directa: la captura se acumula en memoria y, al detener, se añade al
 // final del documento enfocado como una operación de deshacer.
+void MainWindow::setInputMuted(bool muted) {
+    inputMuted = muted;
+    if (recorder) { recorder->buffer.muted = muted; recorder->buffer.peaks[0] = recorder->buffer.peaks[1] = 0; }
+    if (inputVu) inputVu->reset();
+    const QString description = muted ? "Entrada silenciada · clic para activar" : "Silenciar entrada";
+    inputMuteButton->setToolTip(description); inputMuteButton->setAccessibleName(description);
+}
+void MainWindow::setOutputMuted(bool muted) {
+    bool ok = true;
+#ifdef Q_OS_WIN
+    ok = playback->mute.set(playback->handle, muted);
+#endif
+    if (ok && livePreview) ok = livePreview->setMuted(muted);
+    if (!ok) {
+#ifdef Q_OS_WIN
+        playback->mute.set(playback->handle, outputMuted);
+#endif
+        QSignalBlocker block(outputMuteButton); outputMuteButton->setChecked(outputMuted);
+        statusBar()->showMessage("El dispositivo no permite cambiar el mute de salida.", 5000); return;
+    }
+    outputMuted = muted;
+    if (outputVu) outputVu->reset();
+    if (previewVu) previewVu->reset();
+    const QString description = muted ? "Salida silenciada · clic para activar" : "Silenciar salida";
+    outputMuteButton->setToolTip(description); outputMuteButton->setAccessibleName(description);
+}
 void MainWindow::ensureRecorder() {
     if (recorder) return;
     recorder = recordingSource ? recordingSource() : new Recorder(this);
+    recorder->buffer.muted = inputMuted;
     connect(recorder, &Recorder::updated, this, [this] {
         if (!inputVu) return;
         const auto &buffer = recorder->buffer;
-        inputVu->setLevels(buffer.peaks[0], buffer.audio.channels == 1 ? buffer.peaks[0] : buffer.peaks[1]);
+        inputVu->setLevels(inputMuted ? 0 : buffer.peaks[0], inputMuted ? 0 : buffer.audio.channels == 1 ? buffer.peaks[0] : buffer.peaks[1]);
     });
     connect(recorder, &Recorder::failed, this, [this](const QString &error) {
         if (recording) { stopRecording(); statusBar()->showMessage(error, 5000); return; }
@@ -1164,6 +1203,7 @@ bool MainWindow::startPlayback(const AudioData &audio, qint64 first, qint64 last
         playback->handle = nullptr; playback->floatOutput = false; result = open();
     }
     if (result != MMSYSERR_NOERROR) { playback->handle = nullptr; stopPlayback(); error = "No se pudo abrir el dispositivo de audio (código " + QString::number(result) + ")."; return false; }
+    if (!playback->mute.set(playback->handle, outputMuted)) { stopPlayback(); error = "El dispositivo no permite silenciar la salida."; return false; }
     const qint64 byteCount = (last - first) * playback->bytesPerFrame;
     if (quint64(byteCount) > std::numeric_limits<DWORD>::max()) { stopPlayback(); error = "El tramo es demasiado largo para la salida de audio."; return false; }
     playback->header = {};
@@ -1221,7 +1261,7 @@ void MainWindow::stopPlayback() {
     if (!recording) timer.stop();
     previewEnded = nullptr;
 #ifdef Q_OS_WIN
-    if (playback->handle) { waveOutReset(playback->handle); waveOutUnprepareHeader(playback->handle, &playback->header, sizeof(WAVEHDR)); waveOutClose(playback->handle); playback->handle = nullptr; }
+    if (playback->handle) { waveOutReset(playback->handle); playback->mute.set(playback->handle, false); waveOutUnprepareHeader(playback->handle, &playback->header, sizeof(WAVEHDR)); waveOutClose(playback->handle); playback->handle = nullptr; }
 #endif
     if (auto *playing = playback->document) {
         playing->wave->playhead = -1; playing->wave->update();
@@ -1262,8 +1302,8 @@ void MainWindow::tick() {
             for (qint64 f = frame; f < qMin(audio.frames(), frame + 1024); ++f)
                 for (int c = 0; c < audio.channels; ++c)
                     peaks[c] = std::max(peaks[c], double(std::abs(audio.samples[f * audio.channels + c])));
-            outputVu->setLevels(peaks[0], audio.channels == 1 ? peaks[0] : peaks[1]);
-            if (previewVu) previewVu->setLevels(peaks[0], audio.channels == 1 ? peaks[0] : peaks[1]);
+            outputVu->setLevels(outputMuted ? 0 : peaks[0], outputMuted ? 0 : audio.channels == 1 ? peaks[0] : peaks[1]);
+            if (previewVu) previewVu->setLevels(outputMuted ? 0 : peaks[0], outputMuted ? 0 : audio.channels == 1 ? peaks[0] : peaks[1]);
         }
     }
     auto *d = playback->document;
@@ -1340,6 +1380,21 @@ int playbackTests() {
     std::printf("BENCH playback 120s startup_ms=%.2f format=%s (silent output probe)\n", startup.nsecsElapsed() / 1000000., window.playback->floatOutput ? "float32" : "PCM16");
     if (started && window.playback->floatOutput) check(window.playback->bytes.isEmpty() && window.playback->header.lpData == reinterpret_cast<const char *>(longAudio.samples.constData()), "long audio starts without a full-track PCM conversion or copy");
     else check(started, "long audio can start on compatibility output");
+    const auto muteHandle = window.playback->handle;
+    DWORD previousVolume = 0, mutedVolume = 1, restoredVolume = 0;
+    waveOutGetVolume(muteHandle, &previousVolume);
+    window.outputMuteButton->click(); waveOutGetVolume(muteHandle, &mutedVolume);
+    check(window.outputMuted && window.outputMuteButton->isChecked() && mutedVolume == 0 && window.playback->handle == muteHandle
+        && window.playbackIsRunning(first) && !window.inputMuted && window.playback->source.samples.constData() == longAudio.samples.constData(),
+        "speaker click mutes native output without stopping, copying audio or muting input");
+    window.outputMuteButton->click(); waveOutGetVolume(muteHandle, &restoredVolume);
+    check(!window.outputMuted && restoredVolume == previousVolume && window.playback->handle == muteHandle && window.playbackIsRunning(first),
+        "second speaker click restores the prior volume on the same stream");
+    window.outputMuteButton->click(); window.stopPlayback();
+    bool mutedStart = window.startPlayback(longAudio, 0, longAudio.frames(), first, false, error, true);
+    waveOutGetVolume(window.playback->handle, &mutedVolume);
+    check(mutedStart && window.outputMuted && mutedVolume == 0 && !window.playback->floatOutput, "output mute persists across Stop/Play and PCM16 fallback");
+    window.outputMuteButton->click();
     window.stopPlayback();
     // Cerrar un MDI ajeno no debe reiniciar ni detener el dispositivo de salida.
     first->data.samples.fill(0, 44100 * 2 * 3); first->wave->invalidateCache();
