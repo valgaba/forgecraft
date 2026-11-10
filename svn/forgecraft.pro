@@ -28,3 +28,9 @@ CONFIG(debug, debug|release) {
     OBJECTS_DIR = $$PWD/../out/build/release/obj
     MOC_DIR = $$PWD/../out/build/release/moc
 }
+
+SOURCES += samplebuffer.cpp largeaudio_tests.cpp
+HEADERS += samplebuffer.h
+
+SOURCES += playbackstream.cpp
+HEADERS += playbackstream.h

@@ -337,7 +337,7 @@ void MainWindow::runProcess(const QString &id) {
     const AudioData before = doc->data; qint64 first = processFirst, last = processLast;
     watcher.setFuture(QtConcurrent::run([before, first, last, id, values, cancel] {
         try { return Dsp::apply(before, first, last, id, values, cancel.get()); }
-        catch (const std::bad_alloc &) { Dsp::Result result; result.error = "No hay memoria suficiente para este proceso."; return result; }
+        catch (const std::exception &e) { Dsp::Result result; result.error = QString::fromUtf8(e.what()); return result; }
     }));
     if (!watcher.isFinished()) progress.exec();
     watcher.waitForFinished();

@@ -88,7 +88,7 @@ void ProcessPreview::rebuild() {
             if (canceled->load() || !work.error.isEmpty()) { work.canceled = canceled->load(); return work; }
             work.wet = outputFormat(std::move(processed), outputRate, silentFrames, canceled.get(), work.error);
             work.canceled = canceled->load();
-        } catch (const std::bad_alloc &) { work.error = "No hay memoria suficiente para actualizar la preescucha."; }
+        } catch (const std::exception &e) { work.error = QString::fromUtf8(e.what()); }
         return work;
     }));
 }

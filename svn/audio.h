@@ -1,5 +1,6 @@
 #pragma once
 #include <QVector>
+#include "samplebuffer.h"
 #include <QString>
 #include <functional>
 
@@ -15,7 +16,7 @@ struct AudioData {
     int channels = 2;
     int bitDepth = 16;
     bool floatFormat = false;   // 32 bits en coma flotante (formato 3 de WAV)
-    QVector<float> samples;
+    SampleBuffer samples;
     QVector<Marker> markers;
     qint64 frames() const { return samples.size() / channels; }
     double duration() const { return double(frames()) / rate; }

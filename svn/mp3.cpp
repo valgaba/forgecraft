@@ -73,7 +73,6 @@ bool Mp3::read(const QString &path, AudioData &out, QString &error, const AudioD
     if (!report(0)) return false;
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) { error = file.errorString(); return false; }
-    if (file.size() > 512 * 1024 * 1024) { error = "El límite de apertura es 512 MB por archivo."; return false; }
     const qint64 fileSize = file.size();
     Decoder api; if (!api.load(error)) return false;
     if (api.mpg123_init() != MPG123_OK) { error = "No se pudo iniciar el decodificador MP3."; return false; }
@@ -103,8 +102,8 @@ bool Mp3::read(const QString &path, AudioData &out, QString &error, const AudioD
         }
         if (done) {
             if (!haveFormat || done % (sizeof(float) * result.channels)) { error = "Datos MP3 no válidos."; return false; }
-            if ((quint64(result.samples.size()) * sizeof(float) + done) > 512 * 1024 * 1024) {
-                error = "El audio MP3 decodificado supera el límite de 512 MB en memoria."; return false;
+            if ((quint64(result.samples.size()) * sizeof(float) + done) > quint64(SampleBuffer::maxBytes)) {
+                error = "El audio MP3 supera la capacidad de 256 GB por documento."; return false;
             }
             qsizetype oldSize = result.samples.size(), count = qsizetype(done / sizeof(float));
             result.samples.resize(oldSize + count);

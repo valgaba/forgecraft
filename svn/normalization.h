@@ -9,6 +9,6 @@ struct NormalizeLevels {
 };
 NormalizeLevels scanNormalize(const AudioData &audio, qint64 first, qint64 last,
                               const Values &values, const std::atomic_bool *cancel = nullptr);
-QString normalizeSamples(QVector<float> &samples, int channels, int rate, const Values &values,
+QString normalizeSamples(SampleBuffer &samples, int channels, int rate, const Values &values,
                          const Values &cached, const std::atomic_bool *cancel);
 }

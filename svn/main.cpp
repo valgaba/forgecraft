@@ -36,6 +36,9 @@
 
 int dspTests();
 int audioFormatTests();
+int sampleBufferTests();
+int largeAudioTests();
+int largeAudioUiTests();
 int audioFormatUiTests();
 int recordingTests();
 int recordingScopeTests();
@@ -111,6 +114,8 @@ static int selfTest() {
     protectedFile.open(QIODevice::ReadOnly); check(protectedFile.readAll() == "keep original", "failed MP3 export preserves existing file"); protectedFile.close();
     check(!a.write(protectedPath, error, 777), "unsupported MP3 bitrate rejected");
     Document doc; doc.data = a; doc.undo.push(new QUndoCommand("change")); check(!doc.undo.isClean(), "document dirty state"); doc.undo.undo(); check(doc.undo.isClean(), "document undo clean state");
+    failures += sampleBufferTests();
+    failures += largeAudioUiTests();
     failures += audioFormatTests();
     failures += dspTests();
     failures += recordingTests();
@@ -150,12 +155,24 @@ static void applyTheme(QApplication &app) {
     app.setStyleSheet(sheet);
 }
 
+class ForgeApplication : public QApplication {
+public:
+    using QApplication::QApplication;
+    bool notify(QObject *receiver, QEvent *event) override {
+        try { return QApplication::notify(receiver, event); }
+        catch (const std::exception &error) { QMessageBox::warning(activeWindow(), "Almacenamiento de audio", QString::fromUtf8(error.what())); return false; }
+    }
+};
 int main(int argc, char **argv) {
-    QApplication app(argc, argv); app.setApplicationName("ForgeCraft"); app.setApplicationVersion("0.1.6"); app.setOrganizationName("ForgeCraft");
+    ForgeApplication app(argc, argv); app.setApplicationName("ForgeCraft"); app.setApplicationVersion("0.1.7"); app.setOrganizationName("ForgeCraft");
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/ForgeCraftAppIcon.png")));
     applyTheme(app);
     if (app.arguments().contains("--benchmark-audio")) return audioBenchmark();
     if (app.arguments().contains("--self-test")) return selfTest();
+    if (app.arguments().contains("--large-audio-test")) {
+        const int failures = largeAudioTests() + largeAudioUiTests();
+        std::printf("%d failure(s)\n", failures); return failures ? 1 : 0;
+    }
     if (app.arguments().contains("--mute-test")) {
         const int failures = inputMonitoringTests() + previewLoopTests() + playbackTests();
         std::printf("%d failure(s)\n", failures); return failures ? 1 : 0;

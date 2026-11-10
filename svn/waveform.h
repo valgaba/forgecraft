@@ -7,9 +7,10 @@ class Waveform : public QWidget {
     Q_OBJECT
 public:
     explicit Waveform(QWidget *parent = nullptr);
-    struct PeakData { QVector<float> minima, maxima; bool canceled = false; };
+    struct PeakData { SampleBuffer minima, maxima; bool canceled = false; };
     static PeakData preparePeaks(const AudioData &audio, const AudioData::ReadProgress &progress = {});
     void setPreparedPeaks(PeakData data);
+    PeakData cachedPeaks() const { return audio && cacheData == audio->samples.constData() && cacheSize == audio->samples.size() ? PeakData{minima, maxima, false} : PeakData{}; }
     AudioData *audio = nullptr;
     qint64 anchor = 0, cursor = 0, playhead = -1;
     bool followPlayback = true;
@@ -70,5 +71,5 @@ private:
     const float *cacheData = nullptr;
     qsizetype cacheSize = 0;
     int cacheChannels = 0;
-    QVector<float> minima, maxima;
+    SampleBuffer minima, maxima;
 };

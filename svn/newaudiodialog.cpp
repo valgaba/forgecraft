@@ -10,8 +10,8 @@
 #include <QRadioButton>
 #include <QVBoxLayout>
 
-// Límite de la versión: 512 MB de muestras en memoria.
-static qint64 capacityFrames(int channels) { return (512LL * 1024 * 1024 / qint64(sizeof(float))) / qMax(1, channels); }
+// Capacidad máxima del almacenamiento temporal de audio.
+static qint64 capacityFrames(int channels) { return (256LL * 1024 * 1024 * 1024 / qint64(sizeof(float))) / qMax(1, channels); }
 
 static QString clockText(qint64 frames, int rate) {
     const qint64 ms = frames * 1000 / qMax(1, rate);
@@ -74,7 +74,7 @@ NewAudioDialog::NewAudioDialog(QWidget *parent) : QDialog(parent) {
             "Frecuencia de muestreo: 44.100 Hz o 48.000 Hz son lo habitual; 96.000 y 192.000 Hz duplican o cuadruplican la memoria.\n\n"
             "Profundidad: 16 bits es el formato de la grabación y del guardado por omisión. 24 bits y 32 float se guardan en WAV con esa profundidad; el audio interno siempre es de 32 bits en coma flotante.\n\n"
             "Canales: mono o estéreo.\n\n"
-            "El tiempo máximo depende del límite de 512 MB de muestras en memoria de esta versión.");
+            "El audio grande utiliza archivos temporales en disco. La capacidad real depende del espacio libre, con un máximo de 256 GB de muestras por versión.");
     });
     connect(rateBox, &QComboBox::currentIndexChanged, this, [this] { updateMaxTime(); });
     connect(channelGroup, &QButtonGroup::idToggled, this, [this] { updateMaxTime(); });

@@ -1,4 +1,4 @@
-# ForgeCraft 0.1.6
+# ForgeCraft 0.1.7
 
 Editor de audio para Windows, inspirado en la estética y el flujo de los editores clásicos como Sound Forge 4.5. Implementación propia en **Qt Widgets 6.7.0, C++17 y MinGW 11.2 de 64 bits**, el mismo kit configurado en Radit.
 
@@ -17,7 +17,7 @@ Editor de audio para Windows, inspirado en la estética y el flujo de los editor
 
 ## Descarga
 
-[Descargar ForgeCraft 0.1.6 para Windows de 64 bits](https://github.com/valgaba/forgecraft/releases/download/forgecraft-0.1.6/forgecraft_0_1_6.zip). Descomprimir `forgecraft_0_1_6.zip` y ejecutar `forgecraft_0_1_6\forgecraft.exe`. No requiere instalación. El paquete incluye las DLL de Qt, los plugins, los códecs MP3, la hoja de estilo y las licencias; los detalles están en `README.txt` del propio paquete. La [página de la versión](https://github.com/valgaba/forgecraft/releases/tag/forgecraft-0.1.6) incluye la suma SHA256.
+[Descargar ForgeCraft 0.1.7 para Windows de 64 bits](https://github.com/valgaba/forgecraft/releases/download/forgecraft-0.1.7/forgecraft_0_1_7.zip). Descomprimir `forgecraft_0_1_7.zip` y ejecutar `forgecraft_0_1_7\forgecraft.exe`. No requiere instalación. El paquete incluye las DLL de Qt, los plugins, los códecs MP3, la hoja de estilo y las licencias; los detalles están en `README.txt` del propio paquete. La [página de la versión](https://github.com/valgaba/forgecraft/releases/tag/forgecraft-0.1.7) incluye la suma SHA256.
 
 ## Estructura
 
@@ -114,6 +114,16 @@ Los diálogos permiten ajustar los parámetros. El procesamiento se ejecuta en u
 
 Referencias técnicas: filtros biquad según el [Audio EQ Cookbook del W3C](https://www.w3.org/TR/audio-eq-cookbook/). La implementación de tiempo/tono es propia y no incorpora SoundTouch ni otras bibliotecas DSP.
 
+## Sesiones largas
+
+Se admiten archivos de más de seis horas. Ya no se aplica el límite de 512 MB de audio descomprimido. Los bloques de muestras mayores de 8 MB utilizan temporales en la carpeta temporal de Windows y paginación del sistema; los bloques pequeños permanecen en RAM. El historial de deshacer y los recortes comparten esos archivos, que se liberan al cerrar la última versión que los utiliza. Los procesos y la forma de onda de documentos grandes se preparan en segundo plano. Deshacer y rehacer reutilizan las cachés de picos.
+
+La reproducción de audio grande utiliza un hilo dedicado y una cola de cuatro bloques de 20 ms, con posiciones de 64 bits. No requiere convertir ni enviar toda la sesión en un único búfer de Windows. El guardado WAV se escribe por bloques; cuando supera los 4 GB de RIFF se exporta automáticamente como RF64, conservando la extensión WAV y la profundidad elegida. También puede seleccionarse RF64 explícitamente.
+
+Hace falta espacio libre para el audio descomprimido, las versiones editadas y los temporales de exportación. Como referencia, siete horas a 44.100 Hz estéreo ocupan unos 8,9 GB en muestras float de 32 bits. Los procesos que cambian todo el documento pueden crear otra versión de ese tamaño; cerrar documentos libera sus temporales y su historial. El límite de 256 GB es por versión de audio y no una reserva inicial.
+
+`--large-audio-test -platform offscreen` comprueba almacenamiento compartido y limpieza, WAV de siete horas, edición y cancelación, RF64 mayor de 4 GB, MP3 real de siete horas y transporte estéreo con acceso más allá de 4 GB. Genera únicamente audio sintético en temporales de pruebas.
+
 ## Abrir y guardar audio
 
 Abrir y Guardar como utilizan los **diálogos nativos de Windows**, con filtros por formato. Se puede importar y exportar WAV, MP3, AIFF/AIFC, AU/SND, CAF, Wave64, RF64, RAW/PCM, FLAC, WavPack, Ogg Vorbis, Opus, AAC/ADTS, M4A/AAC, AC3, AMR de banda estrecha, WMA v2, MP2, Matroska/FLAC y WebM/Opus. También se puede extraer la primera pista de audio de archivos compatibles con FFmpeg (por ejemplo MP4 y MKV); las pistas con más de dos canales se mezclan a estéreo. No se importan proyectos AUP/AUP3 ni archivos MIDI.
@@ -141,7 +151,7 @@ Pulsar **Ctrl+R**, el botón rojo de la barra de transporte inferior o el de una
 3. El **vúmetro de Entrada** mide continuamente el dispositivo seleccionado; mientras se graba sigue mostrando su nivel y la barra de estado el tiempo acumulado. Volver a pulsar Grabar detiene la captura. Stop o **Esc** en la barra inferior la detienen cuando está enfocado el MDI que graba; el Stop de ese módulo también la detiene.
 4. Al detener, la toma se añade **al final del documento** como una operación de deshacer; lo que ya había no se toca.
 
-El **ajuste DC** (filtro paso alto a 20 Hz) va siempre activo: quita la componente continua que algunas entradas añaden. Todas las tomas tienen un límite de 512 MB de muestras en memoria (aproximadamente 25 minutos a 44.100 Hz estéreo). Si la toma no cabe en el documento se avisa y no se modifica nada.
+El **ajuste DC** (filtro paso alto a 20 Hz) va siempre activo: quita la componente continua que algunas entradas añaden. Las tomas grandes usan almacenamiento temporal en disco, con una capacidad máxima de 256 GB de muestras por versión, condicionada al espacio libre. Si la toma no cabe en el documento se avisa y no se modifica nada.
 
 Los errores de entrada se muestran en un aviso, sin tocar el documento. Si Windows bloquea el micrófono, revisar sus permisos para aplicaciones de escritorio en **Configuración → Privacidad → Micrófono**. Esta versión no incorpora grabación remota, sincronización externa ni escucha de entrada por los altavoces.
 
@@ -174,14 +184,14 @@ Start-Process .\out\bin\forgecraft.exe -ArgumentList '--smoke-test' -Wait
 Con el ejecutable ya desplegado:
 
 ```powershell
-.\package.ps1 -Version 0.1.6
+.\package.ps1 -Version 0.1.7
 ```
 
-Genera `out/packages/forgecraft_0_1_6.zip` con el ejecutable, la hoja de estilo, las DLL, los plugins (`platforms`, `iconengines`, `imageformats`), los códecs MP3, la carpeta `codecs` con FFmpeg y ffprobe, las licencias y los textos de instalación, y escribe `out/packages/SHA256SUMS.txt`. Ese zip y el archivo de sumas son los dos assets que se adjuntan a la Release; los binarios no se guardan en el repositorio.
+Genera `out/packages/forgecraft_0_1_7.zip` con el ejecutable, la hoja de estilo, las DLL, los plugins (`platforms`, `iconengines`, `imageformats`), los códecs MP3, la carpeta `codecs` con FFmpeg y ffprobe, las licencias y los textos de instalación, y escribe `out/packages/SHA256SUMS.txt`. Ese zip y el archivo de sumas son los dos assets que se adjuntan a la Release; los binarios no se guardan en el repositorio.
 
 ## Alcance de esta versión
 
-Todavía no reproduce todas las funciones de Sound Forge 4.5. Pendientes: automatización avanzada de curvas, grabación remota/sincronizada y plugins externos. Audio y deshacer se mantienen en memoria; límite de apertura de 512 MB por archivo y de 512 MB de audio decodificado para MP3. Los procesos limitan su resultado a 512 MB de muestras. El guardado WAV respeta la profundidad del documento: 8, 16, 24 bits o 32 float. Reproducción mediante la API waveOut de Windows; el medidor muestra picos de muestras, no true peak. No incorpora código, marcas gráficas ni recursos del programa original.
+Todavía no reproduce todas las funciones de Sound Forge 4.5. Pendientes: automatización avanzada de curvas, grabación remota/sincronizada y plugins externos. Los datos de audio y las cachés grandes se almacenan en temporales mapeados en disco. Copias, selecciones y versiones de deshacer comparten datos hasta modificarlos; una selección se puede editar sin copiar su fuente completa. La capacidad es de 256 GB de muestras por versión, condicionada al espacio libre de la carpeta temporal de Windows. El guardado WAV respeta la profundidad del documento: 8, 16, 24 bits o 32 float. Reproducción mediante la API waveOut de Windows; el medidor muestra picos de muestras, no true peak. No incorpora código, marcas gráficas ni recursos del programa original.
 
 ## Licencia
 

@@ -178,6 +178,9 @@ private:
     Waveform *dragPreviewWave = nullptr;   // ventana que muestra el fantasma del arrastre
     void play(bool loop = false);
     bool playbackIsRunning(Document *document) const;
+    bool playbackFinished() const;
+    qint64 playbackOffset() const;
+    friend int largeAudioUiTests();
     void playDocument(Document *document, bool loop);
     bool startPlayback(const AudioData &audio, qint64 first, qint64 last, Document *document, bool loop, QString &error, bool forcePcm16 = false);
     // Vista previa de un proceso: reproduce un audio sin documento asociado.

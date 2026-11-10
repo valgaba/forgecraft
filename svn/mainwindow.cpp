@@ -7,6 +7,7 @@
 #include "optionsdialog.h"
 #include "recorder.h"
 #include "previewplayer.h"
+#include "playbackstream.h"
 #include "waveoutputmute.h"
 #include "theme.h"
 #include <QApplication>
@@ -82,6 +83,7 @@ struct MainWindow::Playback {
     WaveOutputMute mute;
     WAVEHDR header{};
 #endif
+    std::unique_ptr<PlaybackStream> stream;
     QByteArray bytes;
     AudioData source;    // Conserva las muestras durante toda la salida waveOut.
     int bytesPerFrame = 0;
@@ -95,17 +97,18 @@ struct MainWindow::Playback {
 class AudioEdit : public QUndoCommand {
     Document *d;
     AudioData before, after;
+    Waveform::PeakData beforePeaks, afterPeaks;
     qint64 oldAnchor, oldCursor, newAnchor, newCursor;
-    void apply(const AudioData &data, qint64 anchor, qint64 cursor) {
-        d->data = data; d->wave->invalidateCache(); d->wave->anchor = anchor; d->wave->cursor = cursor;
+    void apply(const AudioData &data, const Waveform::PeakData &peaks, qint64 anchor, qint64 cursor) {
+        d->data = data; d->wave->setPreparedPeaks(peaks); d->wave->anchor = anchor; d->wave->cursor = cursor;
         d->wave->start = std::min(d->wave->start, std::max(qint64(0), data.frames() - d->wave->visibleFrames()));
         d->wave->update(); emit d->wave->selectionChanged();
     }
 public:
-    AudioEdit(Document *doc, const AudioData &next, const QString &label, qint64 a, qint64 b)
-        : QUndoCommand(label), d(doc), before(doc->data), after(next), oldAnchor(doc->wave->anchor), oldCursor(doc->wave->cursor), newAnchor(a), newCursor(b) {}
-    void undo() override { apply(before, oldAnchor, oldCursor); }
-    void redo() override { apply(after, newAnchor, newCursor); }
+    AudioEdit(Document *doc, const AudioData &next, const QString &label, qint64 a, qint64 b, Waveform::PeakData oldPeaks = {}, Waveform::PeakData newPeaks = {})
+        : QUndoCommand(label), d(doc), before(doc->data), after(next), beforePeaks(std::move(oldPeaks)), afterPeaks(std::move(newPeaks)), oldAnchor(doc->wave->anchor), oldCursor(doc->wave->cursor), newAnchor(a), newCursor(b) {}
+    void undo() override { apply(before, beforePeaks, oldAnchor, oldCursor); }
+    void redo() override { apply(after, afterPeaks, newAnchor, newCursor); }
 };
 
 void AudioWindow::closeEvent(QCloseEvent *event) {
@@ -792,7 +795,7 @@ void MainWindow::openFile(const QString &path, bool alwaysNew) {
                 loaded.peaks = Waveform::preparePeaks(loaded.data, [percentage, canceled](int value) { percentage->store(85 + value * 14 / 100); return !canceled->load(); });
                 loaded.ok = !loaded.peaks.canceled;
             }
-        } catch (const std::bad_alloc &) { loaded.ok = false; loaded.error = "No hay memoria suficiente para cargar este audio."; }
+        } catch (const std::exception &e) { loaded.ok = false; loaded.error = QString::fromUtf8(e.what()); }
         return loaded;
     }));
     progressTimer.start();
@@ -832,7 +835,34 @@ void MainWindow::refresh() {
     formatLabel->setText(QString("%1 Hz  |  %2  |  %3  |  %4").arg(d->data.rate).arg(depth).arg(d->data.channels == 2 ? "Estéreo" : "Mono").arg(timeText(d->data.frames(), d->data.rate)));
     setWindowTitle(d->name + (d->undo.isClean() ? "" : " *") + " — ForgeCraft");
 }
-void MainWindow::commit(Document *d, const AudioData &after, const QString &name, qint64 a, qint64 b) { if (playback->document == d) stopPlayback(); d->undo.push(new AudioEdit(d, after, name, a, b)); refresh(); }
+void MainWindow::commit(Document *d, const AudioData &after, const QString &name, qint64 a, qint64 b) {
+    auto oldPeaks = d->wave->cachedPeaks(); Waveform::PeakData newPeaks;
+    if (after.samples.constData() == d->data.samples.constData() && after.samples.size() == d->data.samples.size()) newPeaks = oldPeaks;
+    else if (after.samples.diskBacked()) {
+        struct Peaks { Waveform::PeakData before, after; QString error; };
+        auto cancel = std::make_shared<std::atomic_bool>(false); auto value = std::make_shared<std::atomic_int>(0);
+        QProgressDialog progress("Preparando forma de onda…", "Cancelar", 0, 100, this);
+        progress.setMinimumDuration(0); progress.setAutoClose(false); progress.setAutoReset(false); progress.setWindowModality(Qt::ApplicationModal);
+        connect(&progress, &QProgressDialog::canceled, this, [cancel] { cancel->store(true); });
+        QTimer timer; timer.setInterval(30); connect(&timer, &QTimer::timeout, &progress, [&] { progress.setValue(qMin(99, value->load())); });
+        QFutureWatcher<Peaks> watcher; connect(&watcher, &QFutureWatcher<Peaks>::finished, &progress, &QDialog::accept);
+        const AudioData before = d->data;
+        watcher.setFuture(QtConcurrent::run([before, after, oldPeaks, value, cancel] {
+            Peaks result; result.before = oldPeaks;
+            try {
+                if (result.before.minima.isEmpty() && before.frames()) result.before = Waveform::preparePeaks(before, [=](int p) { value->store(p / 2); return !cancel->load(); });
+                if (!cancel->load()) result.after = Waveform::preparePeaks(after, [=](int p) { value->store(50 + p / 2); return !cancel->load(); });
+            } catch (const std::exception &e) { result.error = QString::fromUtf8(e.what()); }
+            return result;
+        }));
+        timer.start(); if (!watcher.isFinished()) progress.exec(); watcher.waitForFinished(); timer.stop();
+        const auto result = watcher.result(); if (cancel->load()) return;
+        if (!result.error.isEmpty()) { QMessageBox::warning(this, "Forma de onda", result.error); return; }
+        oldPeaks = result.before; newPeaks = result.after;
+    }
+    if (playback->document == d) stopPlayback();
+    d->undo.push(new AudioEdit(d, after, name, a, b, std::move(oldPeaks), std::move(newPeaks))); refresh();
+}
 
 void MainWindow::showOptions() {
     QVector<QPair<quint32, QString>> devices;
@@ -1051,7 +1081,7 @@ void MainWindow::insertFragment(Document *target, qint64 position, const AudioDa
         return;
     }
     next.shiftMarkers(at, fragment.frames());
-    next.samples = next.samples.first(at * next.channels) + fragment.samples + next.samples.mid(at * next.channels);
+    next.samples = SampleBuffer::join({next.samples.first(at * next.channels), fragment.samples, next.samples.mid(at * next.channels)});
     for (const auto &marker : fragment.markers) next.markers.append({at + marker.frame, marker.name});
     stopPlayback();
     commit(target, next, "Insertar selección", at, at + fragment.frames());
@@ -1068,7 +1098,7 @@ void MainWindow::paste() {
     if (d->data.frames() && (d->data.rate != clipboard.rate || d->data.channels != clipboard.channels)) { QMessageBox::information(this, "Pegar", "La frecuencia y los canales deben coincidir. Usa Resample o Channel Converter para ajustarlos antes de pegar."); return; }
     AudioData next = d->data; if (!next.frames()) { next.rate = clipboard.rate; next.channels = clipboard.channels; }
     qint64 a = d->wave->first(), b = d->wave->last();
-    next.samples = next.samples.first(a * next.channels) + clipboard.samples + next.samples.mid(b * next.channels);
+    next.samples = SampleBuffer::join({next.samples.first(a * next.channels), clipboard.samples, next.samples.mid(b * next.channels)});
     next.shiftMarkers(a, clipboard.frames());
     for (const auto &marker : clipboard.markers) next.markers.append({a + marker.frame, marker.name});
     commit(d, next, "Pegar", a, a + clipboard.frames());
@@ -1138,7 +1168,7 @@ bool MainWindow::save(Document *d, bool saveAs) {
         Saved saved;
         auto report = [percentage, canceled](int value) { percentage->store(value); return !canceled->load(); };
         try { saved.ok = extendedFormat ? AudioFormats::write(audio, path, exportOptions, saved.error, report) : audio.write(path, saved.error, bitrate, report); }
-        catch (const std::bad_alloc &) { saved.error = "No hay memoria suficiente para guardar este audio."; }
+        catch (const std::exception &e) { saved.error = QString::fromUtf8(e.what()); }
         return saved;
     }));
     timer.start(); if (!watcher.isFinished()) progress.exec();
@@ -1162,7 +1192,7 @@ void MainWindow::tone() {
 }
 bool MainWindow::playbackIsRunning(Document *document) const {
 #ifdef Q_OS_WIN
-    return document && playback->document == document && playback->handle && !(playback->header.dwFlags & WHDR_DONE);
+    return document && playback->document == document && playback->handle && !playbackFinished();
 #else
     Q_UNUSED(document) return false;
 #endif
@@ -1205,7 +1235,11 @@ bool MainWindow::startPlayback(const AudioData &audio, qint64 first, qint64 last
     if (result != MMSYSERR_NOERROR) { playback->handle = nullptr; stopPlayback(); error = "No se pudo abrir el dispositivo de audio (código " + QString::number(result) + ")."; return false; }
     if (!playback->mute.set(playback->handle, outputMuted)) { stopPlayback(); error = "El dispositivo no permite silenciar la salida."; return false; }
     const qint64 byteCount = (last - first) * playback->bytesPerFrame;
-    if (quint64(byteCount) > std::numeric_limits<DWORD>::max()) { stopPlayback(); error = "El tramo es demasiado largo para la salida de audio."; return false; }
+    playback->header = {};
+    if (audio.samples.diskBacked() || quint64(byteCount) > std::numeric_limits<DWORD>::max()) {
+        playback->stream = std::make_unique<PlaybackStream>();
+        if (!playback->stream->start(playback->handle, playback->source, first, last, playback->floatOutput, error)) { stopPlayback(); return false; }
+    } else {
     playback->header = {};
     if (playback->floatOutput) {
         // El motor trabaja en float32: waveOut puede leerlo directamente, sin
@@ -1224,6 +1258,7 @@ bool MainWindow::startPlayback(const AudioData &audio, qint64 first, qint64 last
     result = waveOutPrepareHeader(playback->handle, &playback->header, sizeof(WAVEHDR));
     if (result == MMSYSERR_NOERROR) result = waveOutWrite(playback->handle, &playback->header, sizeof(WAVEHDR));
     if (result != MMSYSERR_NOERROR) { stopPlayback(); error = "No se pudo enviar el audio al dispositivo (código " + QString::number(result) + ")."; return false; }
+    }
     playback->document = document; playback->begin = first; playback->end = last; playback->loop = loop;
     playback->selectionAnchor = document ? document->wave->anchor : 0;
     playback->selectionCursor = document ? document->wave->cursor : 0;
@@ -1261,8 +1296,10 @@ void MainWindow::stopPlayback() {
     if (!recording) timer.stop();
     previewEnded = nullptr;
 #ifdef Q_OS_WIN
+    if (playback->stream) playback->stream->stop();
     if (playback->handle) { waveOutReset(playback->handle); playback->mute.set(playback->handle, false); waveOutUnprepareHeader(playback->handle, &playback->header, sizeof(WAVEHDR)); waveOutClose(playback->handle); playback->handle = nullptr; }
 #endif
+    playback->stream.reset();
     if (auto *playing = playback->document) {
         playing->wave->playhead = -1; playing->wave->update();
         playback->document = nullptr;
@@ -1276,8 +1313,27 @@ void MainWindow::stopPlayback() {
 #endif
     refresh();
 }
+bool MainWindow::playbackFinished() const {
+#ifdef Q_OS_WIN
+    return playback->stream ? playback->stream->finished() : bool(playback->header.dwFlags & WHDR_DONE);
+#else
+    return true;
+#endif
+}
+qint64 MainWindow::playbackOffset() const {
+    if (playback->stream) return playback->stream->position();
+#ifdef Q_OS_WIN
+    MMTIME position{}; position.wType = TIME_SAMPLES;
+    if (waveOutGetPosition(playback->handle, &position, sizeof(position)) == MMSYSERR_NOERROR)
+        return position.wType == TIME_SAMPLES ? position.u.sample : position.wType == TIME_BYTES ? position.u.cb / qMax(1, playback->bytesPerFrame) : qint64(position.u.ms) * playback->source.rate / 1000;
+#endif
+    return 0;
+}
 void MainWindow::tick() {
 #ifdef Q_OS_WIN
+    if (playback->stream && playback->stream->finished() && !playback->stream->error().isEmpty()) {
+        const QString error = playback->stream->error(); stopPlayback(); statusBar()->showMessage(error, 8000); return;
+    }
     // Grabación y reproducción son independientes: se puede grabar en un módulo
     // mientras suena otro.
     if (recording) {
@@ -1290,13 +1346,10 @@ void MainWindow::tick() {
         }
         statusBar()->showMessage(QString("Grabando en «%1» · %2").arg(recordTarget ? recordTarget->name : QString(), timeText(frames, rate)));
     }
-    if (outputVu && playback->handle && !(playback->header.dwFlags & WHDR_DONE)) {
-        MMTIME position{}; position.wType = TIME_SAMPLES;
-        if (waveOutGetPosition(playback->handle, &position, sizeof(position)) == MMSYSERR_NOERROR) {
-            const auto &audio = playback->source;
-            const qint64 offset = position.wType == TIME_SAMPLES ? position.u.sample :
-                position.wType == TIME_BYTES ? position.u.cb / qMax(1, playback->bytesPerFrame) :
-                qint64(position.u.ms) * audio.rate / 1000;
+    if (outputVu && playback->handle && !playbackFinished()) {
+        const auto &audio = playback->source;
+        const qint64 offset = playbackOffset();
+        {
             const qint64 frame = std::clamp(playback->begin + offset, qint64(0), audio.frames());
             double peaks[2] = {0, 0};
             for (qint64 f = frame; f < qMin(audio.frames(), frame + 1024); ++f)
@@ -1309,17 +1362,15 @@ void MainWindow::tick() {
     auto *d = playback->document;
     if (!d) {
         // Las previsualizaciones también alimentan el vúmetro de salida.
-        if (playback->handle && (playback->header.dwFlags & WHDR_DONE)) {
+        if (playback->handle && playbackFinished()) {
             auto callback = previewEnded;
             stopPlayback();
             if (callback) callback();
         }
         return;
     }
-    if (playback->header.dwFlags & WHDR_DONE) { bool loop = playback->loop; stopPlayback(); if (loop) playDocument(d, true); return; }
-    MMTIME t{}; t.wType = TIME_SAMPLES;
-    if (waveOutGetPosition(playback->handle, &t, sizeof(t)) != MMSYSERR_NOERROR) return;
-    qint64 offset = t.wType == TIME_SAMPLES ? t.u.sample : t.wType == TIME_BYTES ? t.u.cb / qMax(1, playback->bytesPerFrame) : qint64(t.u.ms) * d->data.rate / 1000;
+    if (playbackFinished()) { bool loop = playback->loop; stopPlayback(); if (loop) playDocument(d, true); return; }
+    const qint64 offset = playbackOffset();
     qint64 f = qMin(playback->begin + offset, playback->end); d->wave->setPlayhead(f);
     if (!recording) refresh();
 #endif
@@ -1378,7 +1429,7 @@ int playbackTests() {
     AudioData longAudio; longAudio.samples.fill(0, 44100 * 2 * 120);
     QElapsedTimer startup; startup.start(); bool started = window.startPlayback(longAudio, 0, longAudio.frames(), first, false, error);
     std::printf("BENCH playback 120s startup_ms=%.2f format=%s (silent output probe)\n", startup.nsecsElapsed() / 1000000., window.playback->floatOutput ? "float32" : "PCM16");
-    if (started && window.playback->floatOutput) check(window.playback->bytes.isEmpty() && window.playback->header.lpData == reinterpret_cast<const char *>(longAudio.samples.constData()), "long audio starts without a full-track PCM conversion or copy");
+    if (started && window.playback->floatOutput) check(window.playback->bytes.isEmpty() && (window.playback->stream || window.playback->header.lpData == reinterpret_cast<const char *>(longAudio.samples.constData())), "long audio starts without a full-track PCM conversion or copy");
     else check(started, "long audio can start on compatibility output");
     const auto muteHandle = window.playback->handle;
     DWORD previousVolume = 0, mutedVolume = 1, restoredVolume = 0;
@@ -1423,6 +1474,49 @@ int playbackTests() {
     window.close();
 #else
     std::printf("SKIP playback native tests: Windows required\n");
+#endif
+    return failures;
+}
+
+int largeAudioUiTests() {
+    int failures = 0;
+    auto check = [&](bool ok, const char *name) { std::printf("%s large transport %s\n", ok ? "PASS" : "FAIL", name); std::fflush(stdout); if (!ok) ++failures; };
+#ifdef Q_OS_WIN
+    if (!waveOutGetNumDevs()) { check(false, "Windows output available for long transport test"); return failures; }
+    MainWindow window({}, false);
+    AudioData audio; audio.samples.resize(qsizetype(7ll * 3600 * 44100 * 2));
+    window.addDocument(audio); auto *document = window.current(); QString error;
+    bool started = window.startPlayback(audio, 0, audio.frames(), document, false, error);
+    window.timer.stop();
+    check(started && window.playback->stream && window.playback->stream->bufferedBytes() < 128 * 1024 && window.playback->bytes.isEmpty(),
+        "seven-hour stereo session uses a bounded output queue rather than one DWORD-sized buffer");
+    if (!started) { std::printf("%s\n", error.toUtf8().constData()); return failures + 1; }
+    QThread::msleep(250);
+    check(window.playbackOffset() > 4410 && !window.playbackFinished(), "audio advances while the UI is blocked");
+    window.outputMuteButton->click(); const auto handle = window.playback->handle;
+    check(window.outputMuted && window.playback->mute.applied && window.playbackIsRunning(document), "mute preserves the long-running stream");
+    window.outputMuteButton->click(); check(window.playback->handle == handle && !window.outputMuted, "unmute retains the same output device");
+    window.stopPlayback();
+    const qint64 from = audio.frames() - 4410;
+    started = window.startPlayback(audio, from, audio.frames(), document, false, error, true); window.timer.stop();
+    QElapsedTimer timeout; timeout.start();
+    while (!window.playbackFinished() && timeout.elapsed() < 3000) { QEventLoop events; QTimer::singleShot(10, &events, &QEventLoop::quit); events.exec(); }
+    check(started && !window.playback->floatOutput && window.playbackFinished() && window.playbackOffset() == 4410,
+        "seeking to the end beyond 4 GB finishes correctly through PCM16 fallback");
+    window.stopPlayback();
+    AudioData editing; editing.samples.resize(44100 * 2 * 120);
+    const auto originalPeaks = Waveform::preparePeaks(editing);
+    window.addDocument(editing, {}, originalPeaks); auto *edited = window.current();
+    AudioData changed = editing; changed.samples[changed.samples.size() - 1] = .25f;
+    window.commit(edited, changed, "large cache test", changed.frames() - 10, changed.frames());
+    check(edited->wave->cachedPeaks().maxima.last() == .25f && edited->undo.canUndo(), "large edits prepare their waveform asynchronously before commit");
+    edited->undo.undo();
+    check(edited->data.samples.constData() == editing.samples.constData() && edited->wave->cachedPeaks().maxima.last() == 0,
+        "undo restores shared audio and its cached waveform");
+    edited->undo.redo();
+    check(edited->data.samples.constData() == changed.samples.constData() && edited->wave->cachedPeaks().maxima.last() == .25f,
+        "redo restores shared audio and its cached waveform");
+    edited->undo.setClean(); window.close();
 #endif
     return failures;
 }

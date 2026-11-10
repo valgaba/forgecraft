@@ -16,7 +16,7 @@
 #include <cstring>
 
 namespace {
-constexpr qint64 maxBytes = 512ll * 1024 * 1024;
+constexpr qint64 maxBytes = SampleBuffer::maxBytes;
 QStringList rawArgs(const RawAudioOptions &raw) { return {"-f", raw.encoding, "-sample_rate", QString::number(raw.rate), "-ch_layout", raw.channels == 1 ? "mono" : "stereo"}; }
 bool report(const AudioData::ReadProgress &progress, int value, QString &error) {
     if (progress && !progress(value)) { error = "Operación cancelada."; return false; } return true;
@@ -43,7 +43,7 @@ bool run(const QString &tool, const QStringList &arguments, QByteArray &output, 
             if (at >= 0) { const auto line = output.mid(at + 12).split('\n').first(); percent = qBound(begin, begin + int(line.toDouble() / (duration * 1000000) * (end - begin)), end - 1); }
         }
         if ((!sizePath.isEmpty() && QFileInfo(sizePath).size() > maxBytes) || stalled.elapsed() > 120000) {
-            process.kill(); process.waitForFinished(); error = stalled.elapsed() > 120000 ? "El códec no responde." : "El audio decodificado supera el límite de 512 MB."; return false;
+            process.kill(); process.waitForFinished(); error = stalled.elapsed() > 120000 ? "El códec no responde." : "El audio decodificado supera el límite de 256 GB."; return false;
         }
         if (!report(progress, percent, error)) { process.kill(); process.waitForFinished(); return false; }
     }
@@ -129,7 +129,7 @@ bool AudioFormats::read(const QString &path, AudioData &out, QString &error, con
     const auto stream = streams.first().toObject();
     const int rate = stream["sample_rate"].toString().toInt(), channels = qMin(2, stream["channels"].toInt());
     const double duration = info["format"].toObject()["duration"].toString().toDouble();
-    if (rate < 8000 || rate > 384000 || channels < 1 || (duration > 0 && duration * rate * channels * 4 > maxBytes)) { error = "El formato o el tamaño del audio supera los límites del editor (mono/estéreo, 8–384 kHz, 512 MB)."; return false; }
+    if (rate < 8000 || rate > 384000 || channels < 1 || (duration > 0 && duration * rate * channels * 4 > maxBytes)) { error = "El formato o el tamaño del audio supera los límites del editor (mono/estéreo, 8–384 kHz, 256 GB)."; return false; }
     QTemporaryDir temp;
     if (!temp.isValid()) { error = "No se pudo crear el archivo temporal de audio: " + temp.errorString(); return false; }
     const QString decoded = temp.filePath("decoded.f32");
@@ -154,7 +154,7 @@ bool AudioFormats::read(const QString &path, AudioData &out, QString &error, con
 }
 bool AudioFormats::write(const AudioData &audio, const QString &path, const AudioExportOptions &options, QString &error, const AudioData::ReadProgress &progress) {
     error.clear(); const auto *format = forPath(path);
-    if (!format || format->id == "wav" || format->id == "mp3") { error = "Formato de exportación no válido."; return false; }
+    if (!format || format->id == "mp3") { error = "Formato de exportación no válido."; return false; }
     if (audio.channels < 1 || audio.channels > 2 || audio.rate < 8000 || audio.frames() <= 0 || !report(progress, 0, error)) { if (error.isEmpty()) error = "No hay audio válido para exportar."; return false; }
     if ((options.rate && (options.rate < 8000 || options.rate > 384000)) || options.channels < 0 || options.channels > 2) { error = "Frecuencia o canales de exportación no válidos."; return false; }
     const QFileInfo target(path); QTemporaryDir temp(target.absolutePath() + "/.forgecraft-export-XXXXXX");
@@ -182,7 +182,7 @@ bool AudioFormats::write(const AudioData &audio, const QString &path, const Audi
     if (format->id == "flac" || format->id == "mka") args << "-compression_level" << QString::number(qBound(0, options.compression, 12)) << "-sample_fmt" << ((options.bits ? options.bits : audio.bitDepth) <= 16 ? "s16" : "s32");
     if (format->id == "wv") args << "-compression_level" << QString::number(qBound(0, options.compression, 8)) << "-sample_fmt" << (options.floating || (!options.bits && audio.floatFormat) ? "fltp" : (options.bits ? options.bits : audio.bitDepth) <= 16 ? "s16p" : "s32p");
     if (format->id == "wv" && !options.floating && !(options.bits == 0 && audio.floatFormat)) args << "-bits_per_raw_sample" << QString::number(options.bits ? options.bits : audio.bitDepth);
-    if (format->id == "rf64") args << "-rf64" << "always";
+    if (format->id == "rf64" || format->id == "wav") args << "-rf64" << "always";
     args << "-f" << muxer << "-progress" << "pipe:1" << outputPath;
     QByteArray output; if (!run("ffmpeg", args, output, error, progress, 15, 94, audio.duration())) return false;
     QFile encoded(outputPath); if (!encoded.open(QIODevice::ReadOnly)) { error = encoded.errorString(); return false; }

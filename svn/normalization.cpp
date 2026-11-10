@@ -39,7 +39,7 @@ Dsp::NormalizeLevels Dsp::scanNormalize(const AudioData &audio, qint64 first, qi
     return result;
 }
 
-QString Dsp::normalizeSamples(QVector<float> &samples, int channels, int rate, const Values &values,
+QString Dsp::normalizeSamples(SampleBuffer &samples, int channels, int rate, const Values &values,
                              const Values &cached, const std::atomic_bool *cancel) {
     NormalizeLevels levels;
     if (cached.value("scan_cached")) {

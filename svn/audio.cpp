@@ -2,7 +2,10 @@
 #include "mp3.h"
 #include "audioformats.h"
 #include <QFile>
+#include <QFileInfo>
 #include <QSaveFile>
+#include <QScopeGuard>
+#include <QByteArrayView>
 #include <QtEndian>
 #include <algorithm>
 #include <cmath>
@@ -15,35 +18,33 @@ static void put32(QByteArray &b, quint32 n) { char p[4]; qToLittleEndian(n, p); 
 
 bool AudioData::read(const QString &path, AudioData &out, QString &error, const ReadProgress &progress) {
     error.clear();
-    if (path.endsWith(".mp3", Qt::CaseInsensitive)) return Mp3::read(path, out, error, progress);
+    if (path.endsWith(".mp3", Qt::CaseInsensitive)) {
+        if (QFileInfo(path).size() > 8 * 1024 * 1024) return AudioFormats::read(path, out, error, progress);
+        return Mp3::read(path, out, error, progress);
+    }
     if (!path.endsWith(".wav", Qt::CaseInsensitive) && !path.endsWith(".wave", Qt::CaseInsensitive)) return AudioFormats::read(path, out, error, progress);
     auto report = [&](int percent) { if (progress && !progress(percent)) { error = "Carga cancelada."; return false; } return true; };
     if (!report(0)) return false;
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) { error = file.errorString(); return false; }
-    if (file.size() > 512 * 1024 * 1024) { error = "El límite de esta versión es 512 MB por archivo."; return false; }
-    QByteArray bytes;
+    if (file.peek(4) == "RF64") return AudioFormats::read(path, out, error, progress);
     const qint64 fileSize = file.size();
-    bytes.reserve(fileSize);
-    while (!file.atEnd()) {
-        const QByteArray chunk = file.read(1024 * 1024);
-        if (chunk.isEmpty() && file.error() != QFileDevice::NoError) { error = file.errorString(); return false; }
-        if (chunk.isEmpty()) break;
-        bytes.append(chunk);
-        if (bytes.size() > 512 * 1024 * 1024) { error = "El archivo supera el límite de 512 MB."; return false; }
-        if (!report(int(qMin(qint64(30), bytes.size() * 30 / qMax(qint64(1), fileSize))))) return false;
-    }
-    if (bytes.size() < 12 || bytes.first(4) != "RIFF" || bytes.mid(8, 4) != "WAVE") {
-        error = "Selecciona un archivo WAV o MP3 válido."; return false;
+    if (fileSize < 12) { error = "Selecciona un archivo WAV válido."; return false; }
+    auto *mapped = file.map(0, fileSize);
+    if (!mapped) { error = file.errorString(); return false; }
+    const auto cleanup = qScopeGuard([&] { file.unmap(mapped); });
+    const char *bytes = reinterpret_cast<const char *>(mapped);
+    if (QByteArrayView(bytes, 4) != "RIFF" || QByteArrayView(bytes + 8, 4) != "WAVE") {
+        error = "Selecciona un archivo WAV válido."; return false;
     }
     int format = 0, channels = 0, bits = 0, rate = 0, align = 0;
     qint64 pcmOffset = -1, pcmSize = 0;
-    for (qint64 pos = 12; pos + 8 <= bytes.size();) {
-        if (!report(30)) return false;
-        const quint32 size = u32(bytes.constData() + pos + 4);
-        if (pos + 8 + size > bytes.size()) { error = "El archivo WAV está truncado."; return false; }
-        const QByteArray id = bytes.mid(pos, 4);
-        const char *p = bytes.constData() + pos + 8;
+    for (qint64 pos = 12; pos + 8 <= fileSize;) {
+        if (!report(1)) return false;
+        const quint32 size = u32(bytes + pos + 4);
+        if (pos + 8 + size > fileSize) { error = "El archivo WAV está truncado."; return false; }
+        const QByteArrayView id(bytes + pos, 4);
+        const char *p = bytes + pos + 8;
         if (id == "fmt " && size >= 16) {
             format = u16(p); channels = u16(p + 2); rate = int(u32(p + 4));
             align = u16(p + 12); bits = u16(p + 14);
@@ -61,9 +62,9 @@ bool AudioData::read(const QString &path, AudioData &out, QString &error, const 
     result.floatFormat = format == 3;             // 32 en coma flotante
     result.samples.resize(pcmSize / (bits / 8));
     float *destination = result.samples.data();
-    const char *pcm = bytes.constData() + pcmOffset;
+    const char *pcm = bytes + pcmOffset;
     for (qsizetype i = 0; i < result.samples.size(); ++i) {
-        if ((i & 16383) == 0 && !report(30 + int(i * 69 / qMax(qsizetype(1), result.samples.size())))) return false;
+        if ((i & 16383) == 0 && !report(1 + int(i * 98 / qMax(qsizetype(1), result.samples.size())))) return false;
         const char *p = pcm + i * (bits / 8);
         double v = 0;
         if (format == 3) { quint32 raw = u32(p); float f; std::memcpy(&f, &raw, 4); v = std::isfinite(f) ? f : 0; }
@@ -87,14 +88,19 @@ bool AudioData::write(const QString &path, QString &error, int mp3Bitrate, const
     const int bytesPerSample = bits / 8;
     const quint16 format = floatFormat ? 3 : 1;
     quint64 dataSize = quint64(samples.size()) * bytesPerSample;
-    if (dataSize + 36 + (dataSize & 1) > 0xffffffffu) { error = "Audio demasiado largo para WAV RIFF."; return false; }
+    if (dataSize + 36 + (dataSize & 1) > 0xffffffffu) return AudioFormats::write(*this, path, {}, error, progress);
     QByteArray b("RIFF"); put32(b, 36 + dataSize + (dataSize & 1)); b += "WAVEfmt "; put32(b, 16);
     put16(b, format); put16(b, channels); put32(b, rate); put32(b, rate * channels * bytesPerSample);
     put16(b, channels * bytesPerSample); put16(b, bits); b += "data"; put32(b, dataSize);
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) { error = file.errorString(); return false; }
+    if (file.write(b) != b.size()) { error = file.errorString(); return false; }
+    b.clear(); b.reserve(1024 * 1024);
     qsizetype at = 0;
     for (float f : samples) {
         if ((at++ & 16383) == 0 && !report(int(at * 99 / qMax(qsizetype(1), samples.size())))) return false;
-        const double v = std::clamp(double(f), -1.0, 1.0);
+        if (b.size() >= 1024 * 1024) { if (file.write(b) != b.size()) { error = file.errorString(); return false; } b.clear(); }
+        const double v = std::isfinite(f) ? std::clamp(double(f), -1.0, 1.0) : 0;
         if (bits == 8) b.append(char(int(std::clamp(std::lround(v * 128) + 128, 0l, 255l))));
         else if (bits == 16) put16(b, quint16(qint16(std::lround(v * 32767))));
         else if (bits == 24) {
@@ -108,8 +114,7 @@ bool AudioData::write(const QString &path, QString &error, int mp3Bitrate, const
     }
     if (dataSize & 1) b.append(char(0));
     if (!report(100)) return false;
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly) || file.write(b) != b.size() || !file.commit()) { error = file.errorString(); return false; }
+    if (file.write(b) != b.size() || !file.commit()) { error = file.errorString(); return false; }
     return true;
 }
 

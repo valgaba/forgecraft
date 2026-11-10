@@ -6,12 +6,12 @@
 
 namespace {
 constexpr double pi = 3.14159265358979323846;
-constexpr qint64 maxSamples = 512 * 1024 * 1024 / sizeof(float);
+constexpr qint64 maxSamples = SampleBuffer::maxBytes / sizeof(float);
 double db(double value) { return std::pow(10.0, value / 20.0); }
 bool canceled(const std::atomic_bool *flag) { return flag && flag->load(); }
 Dsp::Parameter number(QString key, QString label, double value, double lo, double hi, int decimals = 1) { return {key, label, value, lo, hi, decimals, {}}; }
 Dsp::Parameter choice(QString key, QString label, QStringList choices, int selected = 0) { return {key, label, double(selected), 0, double(choices.size() - 1), 0, choices}; }
-float sample(const QVector<float> &data, int channels, double position, int channel) {
+float sample(const SampleBuffer &data, int channels, double position, int channel) {
     if (data.isEmpty()) return 0;
     position = std::clamp(position, 0.0, double(data.size() / channels - 1));
     qint64 a = qint64(position), b = qMin(a + 1, data.size() / channels - 1);
@@ -19,11 +19,11 @@ float sample(const QVector<float> &data, int channels, double position, int chan
     return float(data[a * channels + channel] * (1 - t) + data[b * channels + channel] * t);
 }
 
-QVector<float> resample(const QVector<float> &input, int channels, qint64 frames, const std::atomic_bool *cancel) {
+SampleBuffer resample(const SampleBuffer &input, int channels, qint64 frames, const std::atomic_bool *cancel) {
     const qint64 n = input.size() / channels;
     if (!n || frames <= 0 || frames > maxSamples / channels) return {};
     if (frames == n) return input;
-    QVector<float> output(frames * channels);
+    SampleBuffer output(frames * channels);
     double step = double(n) / frames, cutoff = qMin(1.0, 1.0 / step);
     const float *src = input.constData(); float *dst = output.data();
     // Windowed-sinc interpolation with anti-alias filtering when downsampling.
@@ -46,14 +46,14 @@ QVector<float> resample(const QVector<float> &input, int channels, qint64 frames
 
 // Waveform-similarity overlap/add: a shared alignment for both stereo channels
 // preserves their relationship while changing duration independently of pitch.
-QVector<float> stretch(const QVector<float> &input, int channels, int rate, qint64 frames, const std::atomic_bool *cancel) {
+SampleBuffer stretch(const SampleBuffer &input, int channels, int rate, qint64 frames, const std::atomic_bool *cancel) {
     qint64 n = input.size() / channels;
     if (!n || frames <= 0 || frames > maxSamples / channels - 8192) return {};
     if (n == frames) return input;
     if (n < 64) return resample(input, channels, frames, cancel);
     int window = int(qMin(qint64(rate * .04), n)); window -= window % 2;
     int hop = window / 2, seek = qMin(rate / 200, window / 4);
-    QVector<float> output((frames + window) * channels, 0), weights(frames + window, 0);
+    SampleBuffer output((frames + window) * channels, 0), weights(frames + window, 0);
     const float *src = input.constData(); float *dst = output.data(); float *ws = weights.data();
     qint64 previous = 0;
     for (qint64 out = 0; out < frames; out += hop) {
@@ -85,7 +85,7 @@ QVector<float> stretch(const QVector<float> &input, int channels, int rate, qint
     output.resize(frames * channels); return output;
 }
 
-void filter(QVector<float> &samples, int channels, int rate, int type, double frequency, double gain, double q, const std::atomic_bool *cancel) {
+void filter(SampleBuffer &samples, int channels, int rate, int type, double frequency, double gain, double q, const std::atomic_bool *cancel) {
     // RBJ biquad coefficient equations, Audio EQ Cookbook (W3C).
     frequency = std::clamp(frequency, 5.0, rate * .475);
     double w = 2 * pi * frequency / rate, cs = std::cos(w), sn = std::sin(w), alpha = sn / (2 * q), A = std::pow(10, gain / 40);
@@ -189,7 +189,7 @@ Dsp::Result Dsp::apply(const AudioData &source, qint64 first, qint64 last, const
     if (first == last && id != "insert_silence") { first = 0; last = source.frames(); }
     if (first == last && id != "insert_silence") return fail("El documento no contiene audio.");
     qint64 n = last - first; int channels = source.channels, rate = source.rate;
-    QVector<float> input = source.samples.mid(first * channels, n * channels), output = input;
+    const SampleBuffer input = source.samples.mid(first * channels, n * channels); SampleBuffer output = input;
     result.audio = source; result.first = first;
     auto allocate = [&](qint64 frames) { return frames >= 0 && frames <= (maxSamples - (source.frames() - n) * channels) / channels; };
     if (id == "normalize") {
@@ -197,11 +197,11 @@ Dsp::Result Dsp::apply(const AudioData &source, qint64 first, qint64 last, const
         if (!error.isEmpty()) return fail(error);
     } else if (id == "insert_silence") {
         qint64 count = qMax(qint64(1), qint64(std::llround(v("seconds") * rate)));
-        if (!allocate(count + n)) return fail("El resultado supera el límite de 512 MB.");
-        output = QVector<float>(count * channels, 0); last = first;
+        if (!allocate(count + n)) return fail("El resultado supera la capacidad de audio de esta versión (256 GB).");
+        output = SampleBuffer(count * channels, 0); last = first;
     } else if (id == "channels") {
         int mode = int(v("mode")), target = mode == 3 ? 2 : 1;
-        if (source.frames() > maxSamples / target) return fail("El resultado supera el límite de 512 MB.");
+        if (source.frames() > maxSamples / target) return fail("El resultado supera la capacidad de audio de esta versión (256 GB).");
         output.resize(n * target);
         for (qint64 f = 0; f < n; ++f) {
             if ((f & 4095) == 0 && canceled(cancel)) return fail({});
@@ -212,12 +212,12 @@ Dsp::Result Dsp::apply(const AudioData &source, qint64 first, qint64 last, const
         channels = target; result.audio.channels = target;
     } else if (id == "resample") {
         qint64 count = qMax(qint64(1), qint64(std::llround(double(n) * v("rate") / rate)));
-        if (!allocate(count)) return fail("El resultado supera el límite de 512 MB.");
+        if (!allocate(count)) return fail("El resultado supera la capacidad de audio de esta versión (256 GB).");
         output = resample(input, channels, count, cancel); result.audio.rate = int(v("rate"));
     } else if (id == "time" || id == "pitch") {
         double factor = id == "time" ? v("duration") / 100 : std::pow(2, v("semitones") / 12);
         qint64 count = id == "time" ? qMax(qint64(1), qint64(std::llround(n * factor))) : n;
-        if (!allocate(count) || !allocate(qint64(n / factor))) return fail("El resultado supera el límite de 512 MB.");
+        if (!allocate(count) || !allocate(qint64(n / factor))) return fail("El resultado supera la capacidad de audio de esta versión (256 GB).");
         if (id == "pitch") output = resample(input, channels, qMax(qint64(1), qint64(std::llround(n / factor))), cancel);
         output = stretch(output, channels, rate, count, cancel);
     } else if (id == "auto_trim") {
@@ -233,10 +233,10 @@ Dsp::Result Dsp::apply(const AudioData &source, qint64 first, qint64 last, const
         else for (int hz : {32,64,125,250,500,1000,2000,4000,8000,16000}) if (hz < rate * .475 && values.value(QString::number(hz)) != 0) filter(output, channels, rate, 0, hz, values.value(QString::number(hz)), 1.4, cancel);
     } else if (id == "delay" || id == "pingpong" || id == "chorus" || id == "flanger") {
         if (id == "pingpong" && channels != 2) return fail("Ping-Pong Echo requiere audio estéreo.");
-        qint64 count = n + qint64(v("tail") * rate); if (!allocate(count)) return fail("El resultado supera el límite de 512 MB.");
+        qint64 count = n + qint64(v("tail") * rate); if (!allocate(count)) return fail("El resultado supera la capacidad de audio de esta versión (256 GB).");
         output.fill(0, count * channels);
         double base = v("delay") * rate / 1000, depth = v("depth") * rate / 1000;
-        int length = int(std::ceil(base + depth)) + 4; QVector<float> line(length * channels, 0);
+        int length = int(std::ceil(base + depth)) + 4; SampleBuffer line(length * channels, 0);
         double wet = v("mix") / 100, feedback = v("feedback") / 100;
         float *dst = output.data(), *ring = line.data();
         for (qint64 f = 0; f < count; ++f) {
@@ -254,10 +254,10 @@ Dsp::Result Dsp::apply(const AudioData &source, qint64 first, qint64 last, const
             }
         }
     } else if (id == "reverb") {
-        qint64 count = n + qint64(v("tail") * rate); if (!allocate(count)) return fail("El resultado supera el límite de 512 MB.");
+        qint64 count = n + qint64(v("tail") * rate); if (!allocate(count)) return fail("El resultado supera la capacidad de audio de esta versión (256 GB).");
         output.fill(0, count * channels); float *dst = output.data();
         for (int c = 0; c < channels; ++c) {
-            QVector<float> combs[4], allpasses[2]; double feedback[4], damped[4] = {0,0,0,0};
+            SampleBuffer combs[4], allpasses[2]; double feedback[4], damped[4] = {0,0,0,0};
             double times[] = {.0297,.0371,.0411,.0437};
             for (int k = 0; k < 4; ++k) { combs[k].fill(0, qMax(1, int(rate * (times[k] + c * .0007)))); feedback[k] = std::pow(.001, double(combs[k].size()) / (rate * v("decay"))); }
             allpasses[0].fill(0, qMax(1, int(rate * .005))); allpasses[1].fill(0, qMax(1, int(rate * .0017)));
@@ -330,9 +330,9 @@ Dsp::Result Dsp::apply(const AudioData &source, qint64 first, qint64 last, const
     }
     if (canceled(cancel)) { result.canceled = true; return result; }
     if (output.isEmpty() && n && (id == "time" || id == "pitch" || id == "resample")) return fail("No se pudo generar el audio procesado.");
-    if (output.size() + (source.frames() - (last - first)) * source.channels > maxSamples) return fail("El resultado supera el límite de 512 MB.");
+    if (output.size() + (source.frames() - (last - first)) * source.channels > maxSamples) return fail("El resultado supera la capacidad de audio de esta versión (256 GB).");
     for (float &value : output) value = std::isfinite(value) ? std::clamp(value, -1.0f, 1.0f) : 0;
-    result.audio.samples = operation->wholeDocument ? output : source.samples.first(first * source.channels) + output + source.samples.mid(last * source.channels);
+    result.audio.samples = operation->wholeDocument ? output : SampleBuffer::join({source.samples.first(first * source.channels), output, source.samples.mid(last * source.channels)});
     result.last = first + output.size() / channels;
     return result;
 }

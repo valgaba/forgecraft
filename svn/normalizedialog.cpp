@@ -213,7 +213,7 @@ void NormalizeDialog::rebuildPreview() {
             auto v = parameters; v["scan_cached"] = 1; v["scan_peak"] = work.levels.peak; v["scan_rms"] = work.levels.rms;
             auto result = Dsp::apply(fragment, 0, fragment.frames(), "normalize", v, cancel.get());
             work.audio = std::move(result.audio); work.error = result.error; work.canceled = result.canceled || cancel->load();
-        } catch (const std::bad_alloc &) { work.error = "No hay memoria suficiente para actualizar la preescucha."; }
+        } catch (const std::exception &e) { work.error = QString::fromUtf8(e.what()); }
         return work;
     }));
 }

@@ -11,7 +11,7 @@
 #include <mmsystem.h>
 #endif
 
-namespace { constexpr qint64 maxSamples = 512 * 1024 * 1024 / sizeof(float); }
+namespace { constexpr qint64 maxSamples = SampleBuffer::maxBytes / sizeof(float); }
 void CaptureBuffer::reset(int rate, int channels) {
     audio = AudioData{}; audio.rate = rate; audio.channels = channels;
     limitFrames = 0; peaks[0] = peaks[1] = 0;
@@ -43,7 +43,7 @@ bool CaptureBuffer::consume(const char *pcm, qsizetype bytes, bool store) {
 Recording::MergeResult Recording::merge(const AudioData &original, const AudioData &take, Mode mode, qint64 position, qint64 selectionEnd) {
     MergeResult result;
     if (take.channels < 1 || take.channels > 2 || take.samples.isEmpty() || take.samples.size() % take.channels || take.rate < 8000) { result.error = "La toma no contiene audio válido."; return result; }
-    if (take.samples.size() > maxSamples) { result.error = "La toma supera el límite de 512 MB."; return result; }
+    if (take.samples.size() > maxSamples) { result.error = "La toma supera el límite de 256 GB."; return result; }
     if (mode == NewDocument) { result.audio = take; result.last = take.frames(); return result; }
     if (mode != Insert && mode != ReplaceSelection) { result.error = "Modo de grabación desconocido."; return result; }
     if (original.channels < 1 || original.channels > 2) { result.error = "Formato de destino no válido."; return result; }
@@ -51,9 +51,9 @@ Recording::MergeResult Recording::merge(const AudioData &original, const AudioDa
     position = std::clamp(position, qint64(0), original.frames());
     qint64 end = mode == ReplaceSelection ? std::clamp(selectionEnd, position, original.frames()) : position;
     int channels = take.channels;
-    if (original.frames() - (end - position) + take.frames() > maxSamples / channels) { result.error = "El resultado supera el límite de 512 MB. Añade la toma en una ventana nueva."; return result; }
+    if (original.frames() - (end - position) + take.frames() > maxSamples / channels) { result.error = "El resultado supera el límite de 256 GB. Añade la toma en una ventana nueva."; return result; }
     result.audio = original.frames() ? original : take;
-    result.audio.samples = original.samples.first(position * channels) + take.samples + original.samples.mid(end * channels);
+    result.audio.samples = SampleBuffer::join({original.samples.first(position * channels), take.samples, original.samples.mid(end * channels)});
     result.first = position; result.last = position + take.frames(); return result;
 }
 
@@ -139,7 +139,7 @@ bool Recorder::drain(bool requeue) {
 void Recorder::poll() {
     bool keepGoing = false;
     try { keepGoing = drain(true); }
-    catch (const std::bad_alloc &) { storing = false; stop(); emit failed("No hay memoria suficiente. Se conserva el audio ya capturado."); return; }
+    catch (const std::exception &e) { storing = false; stop(); emit failed(QString::fromUtf8(e.what())); return; }
     emit updated();
     if (!keepGoing) {
         stop();
@@ -154,7 +154,7 @@ void Recorder::stop() {
 #ifdef Q_OS_WIN
     if (native->handle) {
         waveInStop(native->handle); waveInReset(native->handle);
-        try { drain(false); } catch (const std::bad_alloc &) { /* Keep the captured prefix and release the device. */ }
+        try { drain(false); } catch (const std::exception &) { /* Keep the captured prefix and release the device. */ }
         for (auto &block : native->blocks) if (block.prepared) { waveInUnprepareHeader(native->handle, &block.header, sizeof(WAVEHDR)); block.prepared = false; }
         waveInClose(native->handle); native->handle = nullptr;
     }
